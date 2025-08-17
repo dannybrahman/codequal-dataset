@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+
+{% block title %}CodeQual Dataset Viewer{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Filters Sidebar -->
+    <div class="col-lg-3">
+        <div class="filter-section">
+            <h5>📊 Dataset Stats</h5>
+            <div class="row text-center mb-3">
+                <div class="col-6">
+                    <div class="card">
+                        <div class="card-body p-2">
+                            <h6 class="card-title mb-1">{{ "{:,}".format(stats.total_samples) }}</h6>
+                            <small class="text-muted">Total Samples</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="card">
+                        <div class="card-body p-2">
+                            <h6 class="card-title mb-1">{{ stats.languages|length }}</h6>
+                            <small class="text-muted">Languages</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <h5>🔍 Filters</h5>
+            <form id="filter-form">
+                <!-- Split Filter -->
+                <div class="mb-3">
+                    <label for="split" class="form-label">Split</label>
+                    <select class="form-select" id="split" name="split">
+                        <option value="">All splits</option>
+                        {% for split in filter_options.splits %}
+                        <option value="{{ split }}">{{ split }} ({{ stats.splits.get(split, 0) }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Language Filter -->
+                <div class="mb-3">
+                    <label for="language" class="form-label">Language</label>
+                    <select class="form-select" id="language" name="language">
+                        <option value="">All languages</option>
+                        {% for lang in filter_options.languages %}
+                        <option value="{{ lang }}">{{ lang }} ({{ stats.languages.get(lang, 0) }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <!-- Lines of Code Filter -->
+                <div class="mb-3">
+                    <label class="form-label">Lines of Code</label>
+                    <div class="row">
+                        <div class="col-6">
+                            <input type="number" class="form-control form-control-sm" 
+                                   id="min_lines" name="min_lines" 
+                                   placeholder="Min" min="{{ filter_options.lines_of_code_range[0] }}"
+                                   max="{{ filter_options.lines_of_code_range[1] }}">
+                        </div>
+                        <div class="col-6">
+                            <input type="number" class="form-control form-control-sm" 
+                                   id="max_lines" name="max_lines" 
+                                   placeholder="Max" min="{{ filter_options.lines_of_code_range[0] }}"
+                                   max="{{ filter_options.lines_of_code_range[1] }}">
+                        </div>
+                    </div>
+                    <small class="text-muted">Range: {{ filter_options.lines_of_code_range[0] }} - {{ filter_options.lines_of_code_range[1] }}</small>
+                </div>
+                
+                <!-- Description Length Filter -->
+                <div class="mb-3">
+                    <label class="form-label">Description Length</label>
+                    <div class="row">
+                        <div class="col-6">
+                            <input type="number" class="form-control form-control-sm" 
+                                   id="min_description" name="min_description" 
+                                   placeholder="Min" min="{{ filter_options.description_length_range[0] }}"
+                                   max="{{ filter_options.description_length_range[1] }}">
+                        </div>
+                        <div class="col-6">
+                            <input type="number" class="form-control form-control-sm" 
+                                   id="max_description" name="max_description" 
+                                   placeholder="Max" min="{{ filter_options.description_length_range[0] }}"
+                                   max="{{ filter_options.description_length_range[1] }}">
+                        </div>
+                    </div>
+                    <small class="text-muted">Range: {{ filter_options.description_length_range[0] }} - {{ filter_options.description_length_range[1] }}</small>
+                </div>
+                
+                <!-- Random Sampling -->
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="random_sampling">
+                        <label class="form-check-label" for="random_sampling">
+                            Random sampling
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary">Apply Filters</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="resetFilters()">Reset</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Main Content -->
+    <div class="col-lg-9">
+        <!-- Pagination Controls -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div id="pagination-info" class="pagination-info">
+                Showing 1-{{ samples|length }} of {{ total_count }} samples
+            </div>
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary" id="prev-btn" onclick="previousPage()" disabled>
+                    ← Previous
+                </button>
+                <button type="button" class="btn btn-outline-primary" disabled id="page-info">
+                    Page 1 of {{ ((total_count + 19) // 20) }}
+                </button>
+                <button type="button" class="btn btn-outline-primary" id="next-btn" onclick="nextPage()" 
+                        {% if total_count <= 20 %}disabled{% endif %}>
+                    Next →
+                </button>
+            </div>
+        </div>
+        
+        <!-- Loading Indicator -->
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p>Loading samples...</p>
+        </div>
+        
+        <!-- Samples Container -->
+        <div id="samples-container">
+            {% for sample in samples %}
+            <div class="sample-card">
+                <div class="sample-header">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <h6 class="mb-1">{{ sample.submission_id }}</h6>
+                            <small class="text-muted">{{ sample.function_name or 'Unknown function' }}</small>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <span class="badge bg-primary stats-badge me-1">{{ sample.language }}</span>
+                            <span class="badge bg-secondary stats-badge me-1">{{ sample.split }}</span>
+                            <span class="badge bg-info stats-badge me-1">{{ sample.lines_of_code }} lines</span>
+                            <span class="badge bg-warning stats-badge">{{ sample.description_length }} chars</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="sample-content">
+                    <!-- Problem Description -->
+                    <div class="problem-description">
+                        <h6>📝 Problem Description</h6>
+                        <div>{{ get_problem_formatted(sample.problem)|safe }}</div>
+                    </div>
+                    
+                    <!-- Code Implementation -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6>💻 Code Implementation</h6>
+                            <button class="btn btn-outline-secondary btn-sm copy-btn" 
+                                    data-code="{{ sample.submission|e }}"
+                                    onclick="copyCodeFromData(this)">
+                                📋 Copy
+                            </button>
+                        </div>
+                        <div class="code-container">
+                            {{ get_code_highlighted(sample.submission, sample.language)|safe }}
+                        </div>
+                    </div>
+                    
+                    <!-- Metadata -->
+                    {% if sample.repository %}
+                    <small class="text-muted">
+                        Repository: <code>{{ sample.repository }}</code>
+                    </small>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <!-- Bottom Pagination -->
+        <div class="d-flex justify-content-center mt-4">
+            <div class="btn-group" role="group">
+                <button type="button" class="btn btn-outline-primary" onclick="previousPage()" disabled id="prev-btn-bottom">
+                    ← Previous
+                </button>
+                <button type="button" class="btn btn-outline-primary" disabled id="page-info-bottom">
+                    Page 1 of {{ ((total_count + 19) // 20) }}
+                </button>
+                <button type="button" class="btn btn-outline-primary" onclick="nextPage()" 
+                        {% if total_count <= 20 %}disabled{% endif %} id="next-btn-bottom">
+                    Next →
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Initialize pagination
+    totalPages = {{ ((total_count + 19) // 20) }};
+    
+    // Filter form submission
+    document.getElementById('filter-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        currentPage = 1;
+        loadSamples();
+    });
+    
+    // Load samples with current filters
+    function loadSamples() {
+        if (isLoading) return;
+        
+        showLoading();
+        
+        const formData = new FormData(document.getElementById('filter-form'));
+        const params = new URLSearchParams();
+        
+        // Add form data to params
+        for (const [key, value] of formData.entries()) {
+            if (value) params.append(key, value);
+        }
+        
+        // Add pagination
+        params.append('page', currentPage);
+        params.append('per_page', 20);
+        
+        // Add random seed if random sampling is enabled
+        if (document.getElementById('random_sampling').checked) {
+            params.append('random_seed', Math.floor(Math.random() * 1000000));
+        }
+        
+        fetch(`/api/samples?${params}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                updateSamplesDisplay(data.samples);
+                updatePagination(data.page, data.total_pages, data.total_count);
+                
+                // Update bottom pagination
+                document.getElementById('prev-btn-bottom').disabled = data.page <= 1;
+                document.getElementById('next-btn-bottom').disabled = data.page >= data.total_pages;
+                document.getElementById('page-info-bottom').textContent = `Page ${data.page} of ${data.total_pages}`;
+                
+                hideLoading();
+            })
+            .catch(error => {
+                console.error('Error loading samples:', error);
+                alert('Error loading samples: ' + error.message);
+                hideLoading();
+            });
+    }
+    
+    // Update samples display
+    function updateSamplesDisplay(samples) {
+        const container = document.getElementById('samples-container');
+        
+        if (samples.length === 0) {
+            container.innerHTML = '<div class="alert alert-info">No samples match the current filters.</div>';
+            return;
+        }
+        
+        let html = '';
+        samples.forEach(sample => {
+            html += `
+                <div class="sample-card">
+                    <div class="sample-header">
+                        <div class="row align-items-center">
+                            <div class="col-md-8">
+                                <h6 class="mb-1">${sample.submission_id}</h6>
+                                <small class="text-muted">${sample.function_name || 'Unknown function'}</small>
+                            </div>
+                            <div class="col-md-4 text-end">
+                                <span class="badge bg-primary stats-badge me-1">${sample.language}</span>
+                                <span class="badge bg-secondary stats-badge me-1">${sample.split}</span>
+                                <span class="badge bg-info stats-badge me-1">${sample.lines_of_code} lines</span>
+                                <span class="badge bg-warning stats-badge">${sample.description_length} chars</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="sample-content">
+                        <div class="problem-description">
+                            <h6>📝 Problem Description</h6>
+                            <div>${sample.problem_formatted}</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6>💻 Code Implementation</h6>
+                                <button class="btn btn-outline-secondary btn-sm copy-btn" 
+                                        onclick="copyCode(this, sample.submission)">
+                                    📋 Copy
+                                </button>
+                            </div>
+                            <div class="code-container">
+                                ${sample.submission_highlighted}
+                            </div>
+                        </div>
+                        
+                        ${sample.repository ? `<small class="text-muted">Repository: <code>${sample.repository}</code></small>` : ''}
+                    </div>
+                </div>
+            `;
+        });
+        
+        container.innerHTML = html;
+    }
+    
+    // Navigation functions
+    function nextPage() {
+        if (currentPage < totalPages) {
+            currentPage++;
+            loadSamples();
+        }
+    }
+    
+    function previousPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            loadSamples();
+        }
+    }
+    
+    // Reset filters
+    function resetFilters() {
+        document.getElementById('filter-form').reset();
+        currentPage = 1;
+        loadSamples();
+    }
+</script>
+{% endblock %}

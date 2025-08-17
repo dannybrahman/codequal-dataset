@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Error - CodeQual Dataset Viewer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="alert alert-danger" role="alert">
+            <h4 class="alert-heading">⚠️ Error</h4>
+            <p>{{ message }}</p>
+            <hr>
+            <p class="mb-0">
+                <a href="{{ url_for('index') }}" class="btn btn-outline-danger">← Back to Home</a>
+            </p>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5>📋 Setup Instructions</h5>
+            </div>
+            <div class="card-body">
+                <p>To use the CodeQual Dataset Viewer, make sure you have:</p>
+                <ol>
+                    <li>Set the <code>DATASET_PATH</code> environment variable to point to your integrated dataset directory</li>
+                    <li>The dataset directory contains <code>train.jsonl</code>, <code>valid.jsonl</code>, and <code>test.jsonl</code> files</li>
+                    <li>The dataset was properly integrated using the CodeQual dataset integration workflow</li>
+                </ol>
+                
+                <h6>Example setup:</h6>
+                <pre><code># Copy the example environment file
+cp .env.example .env
+
+# Edit .env to set your dataset path
+DATASET_PATH=../dataset/generated/integrated/codesearchnet
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the application
+python app/app.py</code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
