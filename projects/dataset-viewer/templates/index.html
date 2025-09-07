@@ -101,6 +101,21 @@
                     </div>
                 </div>
                 
+                <!-- Flagged Items Section -->
+                <hr class="my-3">
+                <h5>🚩 Flagged Items</h5>
+                <div id="flagged-stats" class="mb-3">
+                    <span class="badge bg-danger" id="flagged-count">0 flagged</span>
+                </div>
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="showFlaggedItems()">
+                        View Flagged Items
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-success" onclick="exportFlaggedItems()">
+                        Export Flagged Items
+                    </button>
+                </div>
+                
                 <div class="d-grid gap-2">
                     <button type="submit" class="btn btn-primary">Apply Filters</button>
                     <button type="button" class="btn btn-outline-secondary" onclick="resetFilters()">Reset</button>
@@ -144,7 +159,7 @@
             <div class="sample-card">
                 <div class="sample-header">
                     <div class="row align-items-center">
-                        <div class="col-md-8">
+                        <div class="col-md-7">
                             <h6 class="mb-1">{{ sample.submission_id }}</h6>
                             <small class="text-muted">{{ sample.function_name or 'Unknown function' }}</small>
                         </div>
@@ -153,6 +168,14 @@
                             <span class="badge bg-secondary stats-badge me-1">{{ sample.split }}</span>
                             <span class="badge bg-info stats-badge me-1">{{ sample.lines_of_code }} lines</span>
                             <span class="badge bg-warning stats-badge">{{ sample.description_length }} chars</span>
+                        </div>
+                        <div class="col-md-1 text-end">
+                            <button class="btn btn-sm btn-outline-danger flag-btn" 
+                                    data-submission-id="{{ sample.submission_id }}"
+                                    onclick="toggleFlag('{{ sample.submission_id }}', this)"
+                                    title="Flag this item">
+                                🚩
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -207,12 +230,61 @@
         </div>
     </div>
 </div>
+<!-- Modal for flagging comments -->
+<div class="modal fade" id="flagModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Flag Sample</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="flag-comment" class="form-label">Add a comment (optional):</label>
+                    <textarea class="form-control" id="flag-comment" rows="3" 
+                              placeholder="Describe the issue with this sample..."></textarea>
+                </div>
+                <div class="text-muted small">
+                    Flagging: <span id="flag-submission-id"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="confirmFlag()">Flag Item</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for viewing flagged items -->
+<div class="modal fade" id="flaggedItemsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Flagged Items</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="flagged-items-list">
+                <!-- Flagged items will be loaded here -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" onclick="exportFlaggedItems()">Export All</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
     // Initialize pagination
     totalPages = {{ ((total_count + 19) // 20) }};
+    let flaggedItems = new Set();
+    let currentFlagSubmissionId = null;
+    
+    // Load flagged items on page load
+    loadFlaggedItems();
     
     // Filter form submission
     document.getElementById('filter-form').addEventListener('submit', function(e) {
@@ -283,7 +355,7 @@
                 <div class="sample-card">
                     <div class="sample-header">
                         <div class="row align-items-center">
-                            <div class="col-md-8">
+                            <div class="col-md-7">
                                 <h6 class="mb-1">${sample.submission_id}</h6>
                                 <small class="text-muted">${sample.function_name || 'Unknown function'}</small>
                             </div>
@@ -292,6 +364,14 @@
                                 <span class="badge bg-secondary stats-badge me-1">${sample.split}</span>
                                 <span class="badge bg-info stats-badge me-1">${sample.lines_of_code} lines</span>
                                 <span class="badge bg-warning stats-badge">${sample.description_length} chars</span>
+                            </div>
+                            <div class="col-md-1 text-end">
+                                <button class="btn btn-sm ${flaggedItems.has(sample.submission_id) ? 'btn-danger' : 'btn-outline-danger'} flag-btn" 
+                                        data-submission-id="${sample.submission_id}"
+                                        onclick="toggleFlag('${sample.submission_id}', this)"
+                                        title="${flaggedItems.has(sample.submission_id) ? 'Unflag' : 'Flag'} this item">
+                                    🚩
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -344,6 +424,168 @@
         document.getElementById('filter-form').reset();
         currentPage = 1;
         loadSamples();
+    }
+    
+    // Flag/Unflag functions
+    function toggleFlag(submissionId, button) {
+        if (flaggedItems.has(submissionId)) {
+            // Unflag
+            unflagItem(submissionId, button);
+        } else {
+            // Show modal for flagging
+            currentFlagSubmissionId = submissionId;
+            document.getElementById('flag-submission-id').textContent = submissionId;
+            document.getElementById('flag-comment').value = '';
+            const modal = new bootstrap.Modal(document.getElementById('flagModal'));
+            modal.show();
+        }
+    }
+    
+    function confirmFlag() {
+        const comment = document.getElementById('flag-comment').value;
+        const button = document.querySelector(`[data-submission-id="${currentFlagSubmissionId}"]`);
+        
+        fetch('/api/flag', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                submission_id: currentFlagSubmissionId,
+                comment: comment,
+                action: 'flag'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'flagged') {
+                flaggedItems.add(currentFlagSubmissionId);
+                if (button) {
+                    button.classList.remove('btn-outline-danger');
+                    button.classList.add('btn-danger');
+                    button.title = 'Unflag this item';
+                }
+                updateFlaggedCount();
+                bootstrap.Modal.getInstance(document.getElementById('flagModal')).hide();
+            }
+        })
+        .catch(error => {
+            console.error('Error flagging item:', error);
+            alert('Error flagging item: ' + error.message);
+        });
+    }
+    
+    function unflagItem(submissionId, button) {
+        if (confirm('Remove flag from this item?')) {
+            fetch('/api/flag', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    submission_id: submissionId,
+                    action: 'unflag'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'unflagged') {
+                    flaggedItems.delete(submissionId);
+                    if (button) {
+                        button.classList.remove('btn-danger');
+                        button.classList.add('btn-outline-danger');
+                        button.title = 'Flag this item';
+                    }
+                    updateFlaggedCount();
+                }
+            })
+            .catch(error => {
+                console.error('Error unflagging item:', error);
+                alert('Error unflagging item: ' + error.message);
+            });
+        }
+    }
+    
+    function loadFlaggedItems() {
+        fetch('/api/flags')
+        .then(response => response.json())
+        .then(data => {
+            flaggedItems = new Set(data.flagged_items.map(item => item.submission_id));
+            updateFlaggedCount();
+            
+            // Update existing flag buttons
+            document.querySelectorAll('.flag-btn').forEach(button => {
+                const submissionId = button.getAttribute('data-submission-id');
+                if (flaggedItems.has(submissionId)) {
+                    button.classList.remove('btn-outline-danger');
+                    button.classList.add('btn-danger');
+                    button.title = 'Unflag this item';
+                }
+            });
+        });
+    }
+    
+    function updateFlaggedCount() {
+        document.getElementById('flagged-count').textContent = `${flaggedItems.size} flagged`;
+    }
+    
+    function showFlaggedItems() {
+        fetch('/api/flags')
+        .then(response => response.json())
+        .then(data => {
+            const listContainer = document.getElementById('flagged-items-list');
+            
+            if (data.flagged_items.length === 0) {
+                listContainer.innerHTML = '<p class="text-muted">No flagged items yet.</p>';
+            } else {
+                let html = '<div class="list-group">';
+                data.flagged_items.forEach(item => {
+                    html += `
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6>${item.submission_id}</h6>
+                                    <p class="mb-1">${item.comment || 'No comment'}</p>
+                                    <small class="text-muted">
+                                        ${item.language} | ${item.split} | ${item.lines_of_code} lines | 
+                                        Flagged: ${new Date(item.flagged_at).toLocaleString()}
+                                    </small>
+                                </div>
+                                <button class="btn btn-sm btn-outline-danger" 
+                                        onclick="unflagItem('${item.submission_id}', null); showFlaggedItems();">
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                listContainer.innerHTML = html;
+            }
+            
+            const modal = new bootstrap.Modal(document.getElementById('flaggedItemsModal'));
+            modal.show();
+        });
+    }
+    
+    function exportFlaggedItems() {
+        fetch('/api/flags/export')
+        .then(response => {
+            if (response.ok) {
+                return response.blob();
+            } else {
+                throw new Error('No flagged items to export');
+            }
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `flagged_samples_${new Date().toISOString().slice(0,10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        })
+        .catch(error => {
+            alert(error.message);
+        });
     }
 </script>
 {% endblock %}

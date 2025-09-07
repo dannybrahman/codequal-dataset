@@ -6,8 +6,10 @@ filtering capabilities and syntax highlighting.
 """
 
 import os
+import json
 import logging
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_file
 from pygments import highlight
 from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.formatters import HtmlFormatter
@@ -26,6 +28,9 @@ app = Flask(__name__, template_folder='../templates', static_folder='../static')
 
 # Global dataset loader (initialized on startup)
 dataset_loader = None
+
+# In-memory store for flagged items
+flagged_items = {}
 
 
 def get_code_highlighted(code: str, language: str) -> str:
@@ -212,6 +217,130 @@ def api_stats():
     })
 
 
+@app.route('/api/flag', methods=['POST'])
+def api_flag_item():
+    """API endpoint to flag/unflag a sample with a comment."""
+    if not dataset_loader:
+        return jsonify({'error': 'Dataset not loaded'}), 500
+    
+    data = request.json
+    submission_id = data.get('submission_id')
+    comment = data.get('comment', '')
+    action = data.get('action', 'flag')  # 'flag' or 'unflag'
+    
+    if not submission_id:
+        return jsonify({'error': 'submission_id is required'}), 400
+    
+    if action == 'flag':
+        # Get the full sample data
+        sample = dataset_loader.get_sample_by_id(submission_id)
+        if not sample:
+            return jsonify({'error': 'Sample not found'}), 404
+        
+        # Store the flag with metadata
+        flagged_items[submission_id] = {
+            'submission_id': submission_id,
+            'problem_id': sample.problem_id,
+            'language': sample.language,
+            'split': sample.split,
+            'comment': comment,
+            'flagged_at': datetime.now().isoformat(),
+            'source': sample.source,
+            'lines_of_code': sample.lines_of_code,
+            'function_name': sample.function_name
+        }
+        
+        # Save to file immediately
+        save_flagged_items()
+        
+        return jsonify({
+            'status': 'flagged',
+            'submission_id': submission_id,
+            'total_flagged': len(flagged_items)
+        })
+    
+    elif action == 'unflag':
+        if submission_id in flagged_items:
+            del flagged_items[submission_id]
+            save_flagged_items()
+            return jsonify({
+                'status': 'unflagged',
+                'submission_id': submission_id,
+                'total_flagged': len(flagged_items)
+            })
+        else:
+            return jsonify({'error': 'Item not flagged'}), 400
+    
+    return jsonify({'error': 'Invalid action'}), 400
+
+
+@app.route('/api/flags')
+def api_get_flags():
+    """Get all flagged items."""
+    return jsonify({
+        'flagged_items': list(flagged_items.values()),
+        'total_count': len(flagged_items)
+    })
+
+
+@app.route('/api/flags/export')
+def api_export_flags():
+    """Export flagged items to JSON file."""
+    if not flagged_items:
+        return jsonify({'error': 'No flagged items to export'}), 400
+    
+    # Ensure generated directory exists
+    generated_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'generated')
+    os.makedirs(generated_dir, exist_ok=True)
+    
+    # Create filename with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f'flagged_samples_{timestamp}.json'
+    filepath = os.path.join(generated_dir, filename)
+    
+    # Save to file
+    with open(filepath, 'w') as f:
+        json.dump({
+            'exported_at': datetime.now().isoformat(),
+            'total_items': len(flagged_items),
+            'items': list(flagged_items.values())
+        }, f, indent=2)
+    
+    return send_file(filepath, as_attachment=True, download_name=filename)
+
+
+def save_flagged_items():
+    """Save flagged items to a persistent JSON file."""
+    generated_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'generated')
+    os.makedirs(generated_dir, exist_ok=True)
+    
+    filepath = os.path.join(generated_dir, 'flagged_items_current.json')
+    
+    with open(filepath, 'w') as f:
+        json.dump({
+            'last_updated': datetime.now().isoformat(),
+            'items': flagged_items
+        }, f, indent=2)
+
+
+def load_flagged_items():
+    """Load flagged items from persistent storage."""
+    global flagged_items
+    
+    generated_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'generated')
+    filepath = os.path.join(generated_dir, 'flagged_items_current.json')
+    
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+                flagged_items = data.get('items', {})
+                logger.info(f"Loaded {len(flagged_items)} flagged items from storage")
+        except Exception as e:
+            logger.error(f"Error loading flagged items: {e}")
+            flagged_items = {}
+
+
 @app.route('/sample/<submission_id>')
 def sample_detail(submission_id: str):
     """Detailed view for a single sample."""
@@ -245,6 +374,9 @@ def create_app(dataset_path: str = None):
         logger.info(f"Loading dataset from: {dataset_path}")
         dataset_loader = DatasetLoader(dataset_path)
         logger.info("Dataset loaded successfully")
+        
+        # Load previously flagged items
+        load_flagged_items()
     except Exception as e:
         logger.error(f"Failed to load dataset: {e}")
         dataset_loader = None
