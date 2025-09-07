@@ -67,6 +67,21 @@ def main():
                                  help='Training set ratio (default: 0.8)')
     integrate_parser.add_argument('--valid-ratio', type=float, default=0.1,
                                  help='Validation set ratio (default: 0.1)')
+    
+    # Filtering options for CodeSearchNet
+    integrate_parser.add_argument('--min-description-length', type=int,
+                                 help='Minimum description length filter (CodeSearchNet only)')
+    integrate_parser.add_argument('--max-description-length', type=int,
+                                 help='Maximum description length filter (CodeSearchNet only)')
+    integrate_parser.add_argument('--min-lines-of-code', type=int,
+                                 help='Minimum lines of code filter (CodeSearchNet only)')
+    integrate_parser.add_argument('--max-lines-of-code', type=int,
+                                 help='Maximum lines of code filter (CodeSearchNet only)')
+    integrate_parser.add_argument('--random-sample', type=int,
+                                 help='Randomly sample N items from each language in the dataset (CodeSearchNet only)')
+    integrate_parser.add_argument('--skip-flagged', action='store_true',
+                                 help='Skip samples flagged in dataset-viewer (CodeSearchNet only)')
+    
     integrate_parser.set_defaults(workflow='integrate')
     
     # Human annotation integration workflow
@@ -140,6 +155,22 @@ def run_integration_workflow(args):
         logger.error(f"Available sources: {available_sources}")
         return 1
     
+    # Prepare filtering options for CodeSearchNet
+    filtering_options = {}
+    if args.source == 'codesearchnet':
+        if args.min_description_length is not None:
+            filtering_options['min_description_length'] = args.min_description_length
+        if args.max_description_length is not None:
+            filtering_options['max_description_length'] = args.max_description_length
+        if args.min_lines_of_code is not None:
+            filtering_options['min_lines_of_code'] = args.min_lines_of_code
+        if args.max_lines_of_code is not None:
+            filtering_options['max_lines_of_code'] = args.max_lines_of_code
+        if args.random_sample is not None:
+            filtering_options['random_sample'] = args.random_sample
+        if args.skip_flagged:
+            filtering_options['skip_flagged'] = True
+    
     # Run integration
     logger.info(f"Starting integration workflow: {args.source}")
     results = run_integration(
@@ -147,7 +178,8 @@ def run_integration_workflow(args):
         input_path=args.input_path,
         test_samples_file=args.test_samples,
         train_ratio=args.train_ratio,
-        valid_ratio=args.valid_ratio
+        valid_ratio=args.valid_ratio,
+        **filtering_options
     )
     
     logger.info("Integration workflow completed successfully!")

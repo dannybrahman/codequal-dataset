@@ -18,7 +18,10 @@ from ..integrators.codenet_integrator import CodeNetIntegrator
 
 
 def run_integration(source: str, input_path: str, test_samples_file: str = None,
-                   train_ratio: float = 0.8, valid_ratio: float = 0.1) -> Dict[str, Any]:
+                   train_ratio: float = 0.8, valid_ratio: float = 0.1,
+                   min_description_length: int = None, max_description_length: int = None,
+                   min_lines_of_code: int = None, max_lines_of_code: int = None,
+                   random_sample: int = None, skip_flagged: bool = False) -> Dict[str, Any]:
     """
     Run data integration workflow with deterministic output paths.
     
@@ -55,9 +58,27 @@ def run_integration(source: str, input_path: str, test_samples_file: str = None,
     elif source == 'mbpp':
         integrator = MBPPIntegrator(input_path)
     elif source == 'codesearchnet':
-        # CodeSearchNet integrator with default languages (python, javascript, java, go) and preserve original splits
-        integrator = CodeSearchNetIntegrator(input_path, 
-                                           languages=["python", "javascript", "java", "go"])
+        # CodeSearchNet integrator with filtering options
+        # Build kwargs dynamically to avoid passing None values
+        kwargs = {
+            'languages': ["python", "javascript", "java", "go"]
+        }
+        
+        # Add filtering parameters only if they're not None
+        if min_description_length is not None:
+            kwargs['min_description_length'] = min_description_length
+        if max_description_length is not None:
+            kwargs['max_description_length'] = max_description_length
+        if min_lines_of_code is not None:
+            kwargs['min_lines_of_code'] = min_lines_of_code
+        if max_lines_of_code is not None:
+            kwargs['max_lines_of_code'] = max_lines_of_code
+        if random_sample is not None:
+            kwargs['random_sample'] = random_sample
+        if skip_flagged:
+            kwargs['skip_flagged'] = True
+        
+        integrator = CodeSearchNetIntegrator(input_path, **kwargs)
     else:
         raise ValueError(f"Unknown source: {source}")
     

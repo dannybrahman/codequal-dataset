@@ -164,6 +164,64 @@ class CodeEvalIntegrator(DataSourceIntegrator):
                 efficiency=4.0          # Focus on performance for complex problems
             )
     
+    def analyze_dataset(self) -> Dict[str, Any]:
+        """Analyze the CodeEval dataset structure and statistics based on final converted samples."""
+        # Analyze the final converted samples that will be written to disk
+        if not self.converted_samples:
+            # If no converted samples yet, return empty stats
+            return {
+                'source': self.source_name,
+                'total_samples': 0,
+                'lines_of_code_stats': {'min': 0, 'max': 0, 'avg': 0.0},
+                'note': 'No converted samples available for analysis'
+            }
+        
+        # Topic distribution from converted samples
+        topic_dist = {}
+        complexity_dist = {1: 0, 2: 0, 3: 0}
+        code_lengths = []
+        function_patterns = []
+        
+        for sample in self.converted_samples:
+            # Topic distribution from metadata
+            topic = sample.metadata.get('topic', 'unknown')
+            topic_dist[topic] = topic_dist.get(topic, 0) + 1
+            
+            # Complexity distribution from metadata
+            complexity = sample.metadata.get('original_complexity', 2)
+            if complexity in complexity_dist:
+                complexity_dist[complexity] += 1
+            
+            # Code analysis from actual submission
+            code = sample.submission
+            lines_of_code = len(code.splitlines())
+            code_lengths.append(lines_of_code)
+            
+            # Extract function patterns
+            if 'def ' in code:
+                function_patterns.append('function')
+            if 'class ' in code:
+                function_patterns.append('class')
+            if 'import ' in code:
+                function_patterns.append('import')
+        
+        total_samples = len(self.converted_samples)
+        analysis = {
+            'source': self.source_name,
+            'total_samples': total_samples,
+            'topic_distribution': dict(sorted(topic_dist.items())),
+            'complexity_distribution': complexity_dist,
+            'lines_of_code_stats': {
+                'min': min(code_lengths) if code_lengths else 0,
+                'max': max(code_lengths) if code_lengths else 0,
+                'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
+            },
+            'unique_topics': len(topic_dist),
+            'avg_samples_per_topic': total_samples / len(topic_dist) if topic_dist else 0
+        }
+        
+        return analysis
+    
     def _compute_data_statistics(self) -> Dict[str, Any]:
         """Compute CodeEval-specific statistics."""
         if not self.raw_samples:
@@ -189,7 +247,8 @@ class CodeEvalIntegrator(DataSourceIntegrator):
             
             # Code analysis
             canonical_solution = data.get('canonical_solution', '')
-            code_lengths.append(len(canonical_solution))
+            # Use lines of code instead of character count
+            code_lengths.append(len(canonical_solution.splitlines()))
             
             # Extract function patterns
             if 'def ' in canonical_solution:
@@ -203,7 +262,7 @@ class CodeEvalIntegrator(DataSourceIntegrator):
         stats.update({
             'topic_distribution': dict(sorted(topic_dist.items())),
             'complexity_distribution': complexity_dist,
-            'code_length_stats': {
+            'lines_of_code_stats': {
                 'min': min(code_lengths) if code_lengths else 0,
                 'max': max(code_lengths) if code_lengths else 0,
                 'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
@@ -313,7 +372,8 @@ class CodeEvalIntegrator(DataSourceIntegrator):
                 'valid_size': len(valid_samples),
                 'test_size': len(test_samples)
             },
-            'stratified_by_topic': True
+            'stratified_by_topic': True,
+            'dataset_analysis': self.analyze_dataset()  # Include analysis with lines_of_code_stats
         }
         
         metadata_file = output_path / "metadata.json"

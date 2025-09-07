@@ -13,7 +13,7 @@ natural problem descriptions for real-world code quality assessment.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Callable
 from dataclasses import dataclass
 
 from .data_integrator import DataSourceIntegrator, RawDataSample
@@ -39,7 +39,10 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
     """Integrates CodeSearchNet dataset into unified CodeQual schema."""
     
     def __init__(self, codesearchnet_data_path: str, languages: Optional[List[str]] = None, 
-                 preserve_original_splits: bool = False, max_samples_per_language: Optional[int] = None):
+                 preserve_original_splits: bool = False, max_samples_per_language: Optional[int] = None,
+                 min_description_length: Optional[int] = None, max_description_length: Optional[int] = None,
+                 min_lines_of_code: Optional[int] = None, max_lines_of_code: Optional[int] = None,
+                 random_sample: Optional[int] = None, skip_flagged: bool = False):
         """
         Initialize the CodeSearchNet integrator.
         
@@ -48,6 +51,12 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
             languages: List of languages to process (default: all available languages)
             preserve_original_splits: Whether to preserve CodeSearchNet's original train/valid/test splits
             max_samples_per_language: Maximum samples per language (for testing/development)
+            min_description_length: Minimum description length filter
+            max_description_length: Maximum description length filter
+            min_lines_of_code: Minimum lines of code filter
+            max_lines_of_code: Maximum lines of code filter
+            random_sample: Number of samples to randomly select from filtered data
+            skip_flagged: Skip samples that have been flagged in dataset-viewer
         """
         super().__init__(codesearchnet_data_path, "codesearchnet")
         # Use provided languages or all available languages in the dataset
@@ -56,9 +65,32 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
         self.preserve_original_splits = preserve_original_splits
         self.max_samples_per_language = max_samples_per_language
         
+        # Filtering parameters
+        self.min_description_length = min_description_length
+        self.max_description_length = max_description_length
+        self.min_lines_of_code = min_lines_of_code
+        self.max_lines_of_code = max_lines_of_code
+        self.random_sample = random_sample
+        self.skip_flagged = skip_flagged
+        
+        # Load flagged samples if skip_flagged is enabled
+        self.flagged_samples = set()
+        if self.skip_flagged:
+            self.flagged_samples = self._load_flagged_samples()
+        
         logger.info(f"Initialized CodeSearchNet integrator for languages: {self.languages}")
         if max_samples_per_language:
             logger.info(f"Limited to {max_samples_per_language} samples per language")
+        
+        # Log filtering parameters
+        if min_description_length or max_description_length:
+            logger.info(f"Description length filter: {min_description_length or 'no min'} - {max_description_length or 'no max'}")
+        if min_lines_of_code or max_lines_of_code:
+            logger.info(f"Lines of code filter: {min_lines_of_code or 'no min'} - {max_lines_of_code or 'no max'}")
+        if random_sample:
+            logger.info(f"Random sampling: {random_sample} samples per language")
+        if self.skip_flagged:
+            logger.info(f"Skip flagged samples: will filter out {len(self.flagged_samples)} flagged samples")
     
     def load_raw_data(self) -> List[RawDataSample]:
         """Load CodeSearchNet samples from JSONL files."""
@@ -314,63 +346,120 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
         
         return documentation
     
-    def analyze_dataset(self) -> Dict[str, Any]:
-        """Analyze the CodeSearchNet dataset structure and statistics."""
-        if not self.raw_samples:
-            self.load_raw_data()
+    def _load_flagged_samples(self) -> set:
+        """Load flagged samples from dataset-viewer exported files."""
+        import json
+        flagged_samples = set()
         
-        # Count samples by language and split
+        # Path to dataset-viewer generated directory
+        viewer_generated_path = Path(__file__).parent.parent.parent.parent / "dataset-viewer" / "generated"
+        
+        if not viewer_generated_path.exists():
+            logger.info(f"Dataset-viewer generated directory not found: {viewer_generated_path}")
+            return flagged_samples
+        
+        # Find all JSON files except those ending with _current.json
+        json_files = []
+        for json_file in viewer_generated_path.glob("*.json"):
+            if not json_file.name.endswith("_current.json"):
+                json_files.append(json_file)
+        
+        if not json_files:
+            logger.info("No exported flagged files found in dataset-viewer/generated directory")
+            return flagged_samples
+        
+        logger.info(f"Found {len(json_files)} exported flagged files: {[f.name for f in json_files]}")
+        
+        # Load flagged samples from all exported files
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    flagged_data = json.load(f)
+                
+                # Handle the export format: {"items": [...], "exported_at": ..., "total_items": ...}
+                if 'items' in flagged_data:
+                    items = flagged_data['items']
+                    file_count = 0
+                    for item in items:
+                        submission_id = item.get('submission_id')
+                        if submission_id:
+                            flagged_samples.add(submission_id)
+                            file_count += 1
+                    logger.info(f"Loaded {file_count} flagged samples from {json_file.name}")
+                else:
+                    logger.warning(f"No 'items' key found in {json_file.name}")
+                
+            except Exception as e:
+                logger.warning(f"Error loading flagged samples from {json_file}: {e}")
+        
+        logger.info(f"Total flagged samples to skip: {len(flagged_samples)}")
+        return flagged_samples
+    
+    def analyze_dataset(self) -> Dict[str, Any]:
+        """Analyze the CodeSearchNet dataset structure and statistics based on final converted samples."""
+        # Analyze the final converted samples that will be written to disk
+        if not self.converted_samples:
+            # If no converted samples yet, return empty stats
+            return {
+                'source': self.source_name,
+                'total_samples': 0,
+                'lines_of_code_stats': {'min': 0, 'max': 0, 'avg': 0.0},
+                'note': 'No converted samples available for analysis'
+            }
+        
+        # Count samples by language
         language_counts = {}
-        split_counts = {'train': 0, 'test': 0, 'valid': 0, 'unknown': 0}
         code_lengths = []
         documentation_lengths = []
         has_documentation = 0
         repositories = set()
         
-        for sample in self.raw_samples:
-            data = sample.raw_data
-            language = data.get('language', 'unknown')
-            split = data.get('split', 'unknown')
-            
-            # Count by language
+        for sample in self.converted_samples:
+            # Language distribution from metadata
+            language = sample.metadata.get('language', 'unknown')
             language_counts[language] = language_counts.get(language, 0) + 1
             
-            # Count by split
-            split_counts[split] = split_counts.get(split, 0) + 1
+            # Use lines_of_code from metadata (computed during conversion)
+            lines_of_code = sample.metadata.get('lines_of_code', 0)
+            code_lengths.append(lines_of_code)
             
-            # Code analysis
-            code = data.get('func_code_string', '')
-            code_lengths.append(len(code))
-            
-            # Documentation analysis
-            doc = data.get('func_documentation_string', '').strip()
-            if doc:
+            # Check if documentation exists (problem field)
+            if sample.problem and sample.problem.strip():
                 has_documentation += 1
-                documentation_lengths.append(len(doc))
+                documentation_lengths.append(len(sample.problem))
             
-            # Repository analysis
-            repo = data.get('repository_name', '')
+            # Repository analysis from metadata
+            repo = sample.metadata.get('repository_name', '')
             if repo:
                 repositories.add(repo)
         
+        total_samples = len(self.converted_samples)
         analysis = {
             'source': self.source_name,
-            'total_samples': len(self.raw_samples),
+            'total_samples': total_samples,
             'language_distribution': language_counts,
-            'original_split_distribution': split_counts,
-            'code_length_stats': {
+            'lines_of_code_stats': {
                 'min': min(code_lengths) if code_lengths else 0,
                 'max': max(code_lengths) if code_lengths else 0,
                 'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
             },
             'documentation_stats': {
                 'samples_with_docs': has_documentation,
-                'documentation_coverage': has_documentation / len(self.raw_samples) if self.raw_samples else 0,
+                'documentation_coverage': has_documentation / total_samples if total_samples else 0,
                 'avg_doc_length': sum(documentation_lengths) / len(documentation_lengths) if documentation_lengths else 0
             },
             'repository_stats': {
                 'unique_repositories': len(repositories),
-                'avg_samples_per_repo': len(self.raw_samples) / len(repositories) if repositories else 0
+                'avg_samples_per_repo': total_samples / len(repositories) if repositories else 0
+            },
+            'filtering_applied': {
+                'min_description_length': self.min_description_length,
+                'max_description_length': self.max_description_length,
+                'min_lines_of_code': self.min_lines_of_code,
+                'max_lines_of_code': self.max_lines_of_code,
+                'random_sample': self.random_sample,
+                'skip_flagged': self.skip_flagged,
+                'flagged_samples_loaded': len(self.flagged_samples) if self.skip_flagged else 0
             },
             'data_path': str(self.data_path),
             'languages_processed': self.languages,
@@ -450,6 +539,102 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
             if repository_pattern.lower() in sample.metadata.get('repository_name', '').lower()
         ]
     
+    def convert_to_unified_schema(self, initial_quality_assessment: bool = False,
+                                 quality_assessor: Optional[Callable] = None) -> List[CodeSample]:
+        """
+        Convert raw samples to unified CodeSample format with filtering.
+        
+        Args:
+            initial_quality_assessment: Whether to perform initial quality assessment
+            quality_assessor: Optional quality assessment function
+            
+        Returns:
+            List of CodeSample objects
+        """
+        if not self.raw_samples:
+            self.load_raw_data()
+        
+        self.converted_samples = []
+        samples_before_filter = 0
+        filtered_by_description = 0
+        filtered_by_lines = 0
+        
+        for idx, raw_sample in enumerate(self.raw_samples):
+            try:
+                unified_sample = self._convert_to_unified_sample(raw_sample, idx)
+                samples_before_filter += 1
+                
+                # Apply filtering based on description length
+                description_length = len(unified_sample.problem)
+                if self.min_description_length and description_length < self.min_description_length:
+                    filtered_by_description += 1
+                    continue
+                if self.max_description_length and description_length > self.max_description_length:
+                    filtered_by_description += 1
+                    continue
+                
+                # Apply filtering based on lines of code
+                lines_of_code = unified_sample.metadata.get('lines_of_code', 0)
+                if self.min_lines_of_code and lines_of_code < self.min_lines_of_code:
+                    filtered_by_lines += 1
+                    continue
+                if self.max_lines_of_code and lines_of_code > self.max_lines_of_code:
+                    filtered_by_lines += 1
+                    continue
+                
+                # Apply quality assessment if requested
+                if initial_quality_assessment:
+                    if quality_assessor:
+                        unified_sample.quality_scores = quality_assessor(raw_sample)
+                    else:
+                        unified_sample.quality_scores = self._default_quality_assessment(raw_sample)
+                
+                self.converted_samples.append(unified_sample)
+            except Exception as e:
+                logging.warning(f"Failed to convert sample {raw_sample.source_id}: {e}")
+        
+        # Log filtering statistics
+        if filtered_by_description > 0:
+            logger.info(f"Filtered out {filtered_by_description} samples by description length")
+        if filtered_by_lines > 0:
+            logger.info(f"Filtered out {filtered_by_lines} samples by lines of code")
+        
+        logger.info(f"Converted {len(self.converted_samples)} samples after filtering (from {samples_before_filter} total)")
+        
+        # Apply random sampling per language if requested
+        if self.random_sample and self.converted_samples:
+            import random
+            random.seed(42)  # Fixed seed for reproducibility
+            
+            # Group samples by language
+            samples_by_language = {}
+            for sample in self.converted_samples:
+                language = sample.metadata.get('language', 'unknown')
+                if language not in samples_by_language:
+                    samples_by_language[language] = []
+                samples_by_language[language].append(sample)
+            
+            # Sample from each language
+            sampled_samples = []
+            original_count = len(self.converted_samples)
+            
+            for language, lang_samples in samples_by_language.items():
+                available_samples = len(lang_samples)
+                samples_to_take = min(self.random_sample, available_samples)
+                
+                if available_samples > 0:
+                    # Random sample for this language
+                    lang_sampled = random.sample(lang_samples, samples_to_take)
+                    sampled_samples.extend(lang_sampled)
+                    logger.info(f"Randomly sampled {samples_to_take} samples from {available_samples} {language} samples")
+            
+            self.converted_samples = sampled_samples
+            logger.info(f"Total random sampling: {len(sampled_samples)} samples from {original_count} filtered samples")
+        
+        logging.info(f"Final dataset size: {len(self.converted_samples)} samples")
+        
+        return self.converted_samples
+    
     def save_converted_dataset(self, output_path: Path,
                               train_ratio: float = 0.8,
                               valid_ratio: float = 0.1) -> Dict[str, Path]:
@@ -528,6 +713,22 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
         valid_samples.sort(key=lambda x: (x.metadata.get('language', ''), x.problem_id))
         test_samples.sort(key=lambda x: (x.metadata.get('language', ''), x.problem_id))
         
+        # Apply flagged sample filtering to test set only
+        if self.skip_flagged and self.flagged_samples:
+            original_test_count = len(test_samples)
+            unflagged_test_samples = []
+            flagged_count = 0
+            
+            for sample in test_samples:
+                if sample.submission_id in self.flagged_samples:
+                    flagged_count += 1
+                    logger.info(f"Removing flagged sample from test set: {sample.submission_id}")
+                else:
+                    unflagged_test_samples.append(sample)
+            
+            test_samples = unflagged_test_samples
+            logger.info(f"Filtered out {flagged_count} flagged samples from test set (from {original_test_count} to {len(test_samples)} test samples)")
+        
         logging.info(f"Total split sizes - Train: {len(train_samples)}, Valid: {len(valid_samples)}, Test: {len(test_samples)}")
         
         # Save splits
@@ -557,7 +758,7 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
                 lang_counts[lang] = lang_counts.get(lang, 0) + 1
             language_distribution[split_name] = lang_counts
         
-        # Save metadata
+        # Save metadata (including dataset analysis with lines_of_code_stats)
         metadata = {
             'source': self.source_name,
             'total_samples': len(self.converted_samples),
@@ -568,7 +769,8 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
                 'train_size': len(train_samples),
                 'valid_size': len(valid_samples),
                 'test_size': len(test_samples)
-            }
+            },
+            'dataset_analysis': self.analyze_dataset()  # Include analysis with lines_of_code_stats
         }
         
         if not self.preserve_original_splits:

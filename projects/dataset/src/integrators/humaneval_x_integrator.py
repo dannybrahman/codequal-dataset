@@ -224,33 +224,52 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
         return canonical_solution
     
     def analyze_dataset(self) -> Dict[str, Any]:
-        """Analyze the HumanEval-X dataset structure and statistics."""
-        if not self.raw_samples:
-            self.load_raw_data()
+        """Analyze the HumanEval-X dataset structure and statistics based on final converted samples."""
+        # Analyze the final converted samples that will be written to disk
+        if not self.converted_samples:
+            # If no converted samples yet, return empty stats
+            return {
+                'source': self.source_name,
+                'total_samples': 0,
+                'lines_of_code_stats': {'min': 0, 'max': 0, 'avg': 0.0},
+                'note': 'No converted samples available for analysis'
+            }
         
-        # Count samples by language
+        # Count samples by language from converted samples
         language_counts = {}
-        for sample in self.raw_samples:
-            lang = sample.raw_data.get('language', 'unknown')
+        code_lengths = []
+        
+        for sample in self.converted_samples:
+            lang = sample.metadata.get('language', 'unknown')
             language_counts[lang] = language_counts.get(lang, 0) + 1
+            
+            # Calculate lines of code from the actual submission
+            lines_of_code = len(sample.submission.splitlines())
+            code_lengths.append(lines_of_code)
         
         # Calculate average solution length by language
         avg_lengths = {}
         for lang in language_counts:
-            lang_samples = [s for s in self.raw_samples if s.raw_data.get('language') == lang]
+            lang_samples = [s for s in self.converted_samples if s.metadata.get('language') == lang]
             if lang_samples:
-                total_length = sum(len(s.raw_data.get('canonical_solution', '')) 
-                                 for s in lang_samples)
+                total_length = sum(len(s.submission.splitlines()) for s in lang_samples)
                 avg_lengths[lang] = total_length / len(lang_samples)
+        
+        total_samples = len(self.converted_samples)
+        unique_problems = len(set(s.problem_id for s in self.converted_samples))
         
         analysis = {
             'source': self.source_name,
-            'total_samples': len(self.raw_samples),
+            'total_samples': total_samples,
             'languages': list(language_counts.keys()),
             'samples_per_language': language_counts,
-            'average_solution_length': avg_lengths,
-            'problems_per_language': 164,  # HumanEval-X has 164 problems per language
-            'unique_problems': 164,  # All languages have the same 164 problems
+            'lines_of_code_stats': {
+                'min': min(code_lengths) if code_lengths else 0,
+                'max': max(code_lengths) if code_lengths else 0,
+                'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
+            },
+            'average_lines_per_language': avg_lengths,
+            'unique_problems': unique_problems,
             'data_path': str(self.data_path)
         }
         
@@ -311,6 +330,15 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
         
         logging.info(f"Total split sizes - Train: {len(train_samples)}, Valid: {len(valid_samples)}, Test: {len(test_samples)}")
         
+        # Calculate language distribution across splits
+        language_distribution = {}
+        for split_name, samples in [('train', train_samples), ('valid', valid_samples), ('test', test_samples)]:
+            lang_counts = {}
+            for sample in samples:
+                lang = sample.metadata.get('language', 'unknown')
+                lang_counts[lang] = lang_counts.get(lang, 0) + 1
+            language_distribution[split_name] = lang_counts
+        
         # Save splits using the parent class method structure
         output_files = {}
         splits = [
@@ -335,6 +363,7 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
             'total_samples': len(self.converted_samples),
             'languages': list(samples_by_language.keys()),
             'samples_per_language': {lang: len(samples) for lang, samples in samples_by_language.items()},
+            'language_distribution': language_distribution,
             'splits': {
                 'train_ratio': train_ratio,
                 'valid_ratio': valid_ratio,
@@ -343,7 +372,8 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
                 'valid_size': len(valid_samples),
                 'test_size': len(test_samples)
             },
-            'stratified_by_language': True
+            'stratified_by_language': True,
+            'dataset_analysis': self.analyze_dataset()  # Include analysis with lines_of_code_stats
         }
         
         metadata_file = output_path / "metadata.json"

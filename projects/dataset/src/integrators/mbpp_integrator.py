@@ -179,45 +179,54 @@ class MBPPIntegrator(DataSourceIntegrator):
             return "unknown"
     
     def analyze_dataset(self) -> Dict[str, Any]:
-        """Analyze the MBPP dataset structure and statistics."""
-        if not self.raw_samples:
-            self.load_raw_data()
+        """Analyze the MBPP dataset structure and statistics based on final converted samples."""
+        # Analyze the final converted samples that will be written to disk
+        if not self.converted_samples:
+            # If no converted samples yet, return empty stats
+            return {
+                'source': self.source_name,
+                'total_samples': 0,
+                'lines_of_code_stats': {'min': 0, 'max': 0, 'avg': 0.0},
+                'note': 'No converted samples available for analysis'
+            }
         
-        # Count samples by original split
+        # Count samples by original split from metadata
         split_counts = {"prompt": 0, "test": 0, "validation": 0, "train": 0, "unknown": 0}
         code_lengths = []
         test_counts = []
         has_imports = 0
         has_setup = 0
         
-        for sample in self.raw_samples:
-            data = sample.raw_data
-            task_id = data.get('task_id', 0)
+        for sample in self.converted_samples:
+            # Get original split from metadata
+            original_split = sample.metadata.get('original_split', 'unknown')
+            if original_split in split_counts:
+                split_counts[original_split] += 1
+            else:
+                split_counts['unknown'] += 1
             
-            # Count by split
-            split = self._determine_split(task_id)
-            split_counts[split] += 1
+            # Code analysis from actual submission
+            code = sample.submission
+            lines_of_code = len(code.splitlines())
+            code_lengths.append(lines_of_code)
             
-            # Code analysis
-            code = data.get('code', '')
-            code_lengths.append(len(code))
+            # Test case analysis from metadata
+            test_cases = sample.metadata.get('test_cases', [])
+            test_counts.append(len(test_cases) if isinstance(test_cases, list) else 0)
             
-            # Test analysis
-            test_list = data.get('test_list', [])
-            test_counts.append(len(test_list))
-            
-            # Metadata analysis
-            if data.get('test_imports'):
+            # Code pattern analysis
+            if 'import ' in code or 'from ' in code:
                 has_imports += 1
-            if data.get('test_setup_code'):
+            if 'def setup' in code.lower() or 'def setUp' in code:
                 has_setup += 1
         
+        total_samples = len(self.converted_samples)
         analysis = {
             'source': self.source_name,
-            'data_file': self.data_file,
-            'total_samples': len(self.raw_samples),
+            'data_file': getattr(self, 'data_file', 'unknown'),
+            'total_samples': total_samples,
             'original_split_distribution': split_counts,
-            'code_length_stats': {
+            'lines_of_code_stats': {
                 'min': min(code_lengths) if code_lengths else 0,
                 'max': max(code_lengths) if code_lengths else 0,
                 'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
@@ -227,8 +236,11 @@ class MBPPIntegrator(DataSourceIntegrator):
                 'max': max(test_counts) if test_counts else 0,
                 'avg': sum(test_counts) / len(test_counts) if test_counts else 0
             },
-            'samples_with_imports': has_imports,
-            'samples_with_setup': has_setup,
+            'code_patterns': {
+                'samples_with_imports': has_imports,
+                'samples_with_setup': has_setup,
+                'import_usage_rate': has_imports / total_samples if total_samples else 0
+            },
             'data_path': str(self.data_path)
         }
         

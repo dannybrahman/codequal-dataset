@@ -314,6 +314,61 @@ class CodeNetIntegrator(DataSourceIntegrator):
         """Return the source name for this integrator.""" 
         return "codenet"
     
+    def analyze_dataset(self) -> Dict[str, Any]:
+        """Analyze the CodeNet dataset structure and statistics based on final converted samples."""
+        # Analyze the final converted samples that will be written to disk
+        if not self.converted_samples:
+            # If no converted samples yet, return empty stats
+            return {
+                'source': self.source_name,
+                'total_samples': 0,
+                'lines_of_code_stats': {'min': 0, 'max': 0, 'avg': 0.0},
+                'note': 'No converted samples available for analysis'
+            }
+        
+        # Count unique problems and submissions from converted samples
+        unique_problems = set()
+        unique_submissions = set()
+        code_lengths = []
+        
+        for sample in self.converted_samples:
+            unique_problems.add(sample.problem_id)
+            unique_submissions.add(sample.submission_id)
+            
+            # Calculate lines of code from the actual submission
+            lines_of_code = len(sample.submission.splitlines())
+            code_lengths.append(lines_of_code)
+        
+        # Calculate quality score ranges if available
+        quality_ranges = {}
+        if self.quality_scores_lookup:
+            dimensions = ['functionality', 'readability', 'idiomatic', 'error_handling', 'efficiency']
+            for dim in dimensions:
+                values = [getattr(qs, dim) for qs in self.quality_scores_lookup.values()]
+                quality_ranges[dim] = {
+                    'min': min(values),
+                    'max': max(values),
+                    'mean': sum(values) / len(values)
+                }
+        
+        total_samples = len(self.converted_samples)
+        analysis = {
+            'source': self.source_name,
+            'total_samples': total_samples,
+            'unique_problems': len(unique_problems),
+            'unique_submissions': len(unique_submissions),
+            'lines_of_code_stats': {
+                'min': min(code_lengths) if code_lengths else 0,
+                'max': max(code_lengths) if code_lengths else 0,
+                'avg': sum(code_lengths) / len(code_lengths) if code_lengths else 0
+            },
+            'quality_scores_available': len(self.quality_scores_lookup) > 0,
+            'quality_score_coverage': len(self.quality_scores_lookup) if self.quality_scores_lookup else 0,
+            'quality_score_ranges': quality_ranges
+        }
+        
+        return analysis
+    
     def get_metadata_summary(self) -> Dict[str, Any]:
         """Get summary metadata about the dataset."""
         if not self.raw_samples:
