@@ -37,8 +37,8 @@ class DatasetSample:
         """Create DatasetSample from dictionary data."""
         metadata = data.get('metadata', {})
         
-        # Calculate metrics
-        lines_of_code = len(data.get('submission', '').split('\n'))
+        # Get metrics from metadata (filtered lines of code) or calculate as fallback
+        lines_of_code = metadata.get('lines_of_code', len(data.get('submission', '').split('\n')))
         description_length = len(data.get('problem', ''))
         
         return cls(

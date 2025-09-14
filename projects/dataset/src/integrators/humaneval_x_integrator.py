@@ -116,7 +116,7 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
             'language': language,
             'task_id': task_id,
             'problem_number': problem_num,
-            'lines_of_code': len(solution.split('\n')),
+            'lines_of_code': self._count_lines_of_code(solution, language),
             'test_cases': data.get('test', ''),
             'example_test': data.get('example_test', ''),
             'assessment_method': None  # Will be set when quality assessment is performed
@@ -244,7 +244,7 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
             language_counts[lang] = language_counts.get(lang, 0) + 1
             
             # Calculate lines of code from the actual submission
-            lines_of_code = len(sample.submission.splitlines())
+            lines_of_code = self._count_lines_of_code(sample.submission, lang)
             code_lengths.append(lines_of_code)
         
         # Calculate average solution length by language
@@ -252,7 +252,7 @@ class HumanEvalXIntegrator(DataSourceIntegrator):
         for lang in language_counts:
             lang_samples = [s for s in self.converted_samples if s.metadata.get('language') == lang]
             if lang_samples:
-                total_length = sum(len(s.submission.splitlines()) for s in lang_samples)
+                total_length = sum(self._count_lines_of_code(s.submission, lang) for s in lang_samples)
                 avg_lengths[lang] = total_length / len(lang_samples)
         
         total_samples = len(self.converted_samples)

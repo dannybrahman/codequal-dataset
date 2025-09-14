@@ -11,7 +11,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from ..integrators import CodeEvalIntegrator, HumanEvalXIntegrator, MBPPIntegrator, CodeSearchNetIntegrator
 from ..integrators.codenet_integrator import CodeNetIntegrator
@@ -21,7 +21,8 @@ def run_integration(source: str, input_path: str, test_samples_file: str = None,
                    train_ratio: float = 0.8, valid_ratio: float = 0.1,
                    min_description_length: int = None, max_description_length: int = None,
                    min_lines_of_code: int = None, max_lines_of_code: int = None,
-                   random_sample: int = None, skip_flagged: bool = False) -> Dict[str, Any]:
+                   random_sample: int = None, skip_flagged: bool = False,
+                   languages: List[str] = None) -> Dict[str, Any]:
     """
     Run data integration workflow with deterministic output paths.
     
@@ -51,7 +52,10 @@ def run_integration(source: str, input_path: str, test_samples_file: str = None,
         else:
             integrator = CodeNetIntegrator(input_path)
     elif source == 'humaneval-x':
-        integrator = HumanEvalXIntegrator(input_path)
+        if languages:
+            integrator = HumanEvalXIntegrator(input_path, languages=languages)
+        else:
+            integrator = HumanEvalXIntegrator(input_path)
     elif source == 'codecontests':
         # Future: CodeContestsIntegrator(input_path)
         raise NotImplementedError(f"CodeContests integration not yet implemented")
@@ -61,7 +65,7 @@ def run_integration(source: str, input_path: str, test_samples_file: str = None,
         # CodeSearchNet integrator with filtering options
         # Build kwargs dynamically to avoid passing None values
         kwargs = {
-            'languages': ["python", "javascript", "java", "go"]
+            'languages': languages if languages else ["python", "javascript", "java", "go"]
         }
         
         # Add filtering parameters only if they're not None

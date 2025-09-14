@@ -207,7 +207,7 @@ class MBPPIntegrator(DataSourceIntegrator):
             
             # Code analysis from actual submission
             code = sample.submission
-            lines_of_code = len(code.splitlines())
+            lines_of_code = self._count_lines_of_code(code, 'python')  # MBPP is Python-only
             code_lengths.append(lines_of_code)
             
             # Test case analysis from metadata

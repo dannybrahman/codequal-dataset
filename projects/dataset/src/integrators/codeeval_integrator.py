@@ -194,7 +194,7 @@ class CodeEvalIntegrator(DataSourceIntegrator):
             
             # Code analysis from actual submission
             code = sample.submission
-            lines_of_code = len(code.splitlines())
+            lines_of_code = self._count_lines_of_code(code, 'python')  # CodeEval is Python-only
             code_lengths.append(lines_of_code)
             
             # Extract function patterns
@@ -248,7 +248,7 @@ class CodeEvalIntegrator(DataSourceIntegrator):
             # Code analysis
             canonical_solution = data.get('canonical_solution', '')
             # Use lines of code instead of character count
-            code_lengths.append(len(canonical_solution.splitlines()))
+            code_lengths.append(self._count_lines_of_code(canonical_solution, 'python'))
             
             # Extract function patterns
             if 'def ' in canonical_solution:

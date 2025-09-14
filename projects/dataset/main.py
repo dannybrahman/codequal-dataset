@@ -81,6 +81,8 @@ def main():
                                  help='Randomly sample N items from each language in the dataset (CodeSearchNet only)')
     integrate_parser.add_argument('--skip-flagged', action='store_true',
                                  help='Skip samples flagged in dataset-viewer (CodeSearchNet only)')
+    integrate_parser.add_argument('--languages', nargs='+',
+                                 help='Languages to include (CodeSearchNet/HumanEval-X only, e.g., --languages python javascript)')
     
     integrate_parser.set_defaults(workflow='integrate')
     
@@ -155,7 +157,7 @@ def run_integration_workflow(args):
         logger.error(f"Available sources: {available_sources}")
         return 1
     
-    # Prepare filtering options for CodeSearchNet
+    # Prepare filtering options for CodeSearchNet and HumanEval-X
     filtering_options = {}
     if args.source == 'codesearchnet':
         if args.min_description_length is not None:
@@ -170,6 +172,11 @@ def run_integration_workflow(args):
             filtering_options['random_sample'] = args.random_sample
         if args.skip_flagged:
             filtering_options['skip_flagged'] = True
+        if args.languages:
+            filtering_options['languages'] = args.languages
+    elif args.source == 'humaneval-x':
+        if args.languages:
+            filtering_options['languages'] = args.languages
     
     # Run integration
     logger.info(f"Starting integration workflow: {args.source}")

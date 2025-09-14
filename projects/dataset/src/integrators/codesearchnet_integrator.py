@@ -253,7 +253,7 @@ class CodeSearchNetIntegrator(DataSourceIntegrator):
             'function_name': func_name,
             'repository_name': repository,
             'file_path': file_path,
-            'lines_of_code': len(code.split('\n')),
+            'lines_of_code': self._count_lines_of_code(code, language),
             'has_documentation': bool(self._get_docstring_from_data(data)),
             'original_split': data.get('split', 'unknown'),
             'github_repository': repository,

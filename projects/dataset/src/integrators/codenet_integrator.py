@@ -336,7 +336,7 @@ class CodeNetIntegrator(DataSourceIntegrator):
             unique_submissions.add(sample.submission_id)
             
             # Calculate lines of code from the actual submission
-            lines_of_code = len(sample.submission.splitlines())
+            lines_of_code = self._count_lines_of_code(sample.submission, 'python')  # CodeNet is Python-only
             code_lengths.append(lines_of_code)
         
         # Calculate quality score ranges if available

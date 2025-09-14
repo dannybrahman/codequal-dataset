@@ -187,6 +187,73 @@ class DataSourceIntegrator(ABC):
                     f"from {self.source_name} to unified schema")
         return self.converted_samples
     
+    def _count_lines_of_code(self, code: str, language: str = 'python') -> int:
+        """Count actual lines of code, excluding comments and blank lines."""
+        lines = code.splitlines()
+        code_lines = 0
+        in_multiline_comment = False
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Skip empty lines
+            if not stripped:
+                continue
+            
+            # Handle Python comments and multiline strings used as comments
+            if language == 'python':
+                # Check for multiline string/comment
+                if '"""' in stripped or "'''" in stripped:
+                    # Simple check - count the quotes
+                    if stripped.count('"""') == 1 or stripped.count("'''") == 1:
+                        in_multiline_comment = not in_multiline_comment
+                        continue
+                    # If even number of quotes, it's a one-line string
+                    elif stripped.count('"""') % 2 == 0 or stripped.count("'''") % 2 == 0:
+                        # Could be a one-line docstring or actual string
+                        if stripped.startswith('"""') or stripped.startswith("'''"):
+                            continue
+                
+                if in_multiline_comment:
+                    continue
+                    
+                # Skip single-line comments
+                if stripped.startswith('#'):
+                    continue
+            
+            # Handle JavaScript/Java/Go comments
+            elif language in ['javascript', 'js', 'java', 'go']:
+                # Check for multiline comment
+                if '/*' in stripped:
+                    in_multiline_comment = True
+                if '*/' in stripped:
+                    in_multiline_comment = False
+                    continue
+                if in_multiline_comment:
+                    continue
+                
+                # Skip single-line comments
+                if stripped.startswith('//'):
+                    continue
+            
+            # Handle C++ comments
+            elif language in ['cpp', 'c++']:
+                # Similar to JavaScript/Java
+                if '/*' in stripped:
+                    in_multiline_comment = True
+                if '*/' in stripped:
+                    in_multiline_comment = False
+                    continue
+                if in_multiline_comment:
+                    continue
+                if stripped.startswith('//'):
+                    continue
+            
+            # If we got here, it's a code line
+            code_lines += 1
+        
+        return code_lines
+    
     def _default_quality_assessment(self, raw_sample: RawDataSample) -> QualityScores:
         """
         Provide default quality scores when no assessor is provided.
