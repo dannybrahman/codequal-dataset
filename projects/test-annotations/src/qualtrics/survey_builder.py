@@ -323,7 +323,7 @@ main()
 <br>
 <p>Please use a scale of 1 (Very Poor) to 5 (Excellent) for each category. You will not be asked to provide justifications—only the ratings. The example above is just to help you understand what to look for.</p>
 <br>
-<p>You may complete the survey in multiple sittings. The estimated total time commitment is around 10 hours.</p>
+<p>You may complete the survey in multiple sittings. The estimated total time commitment is around 20 hours.</p>
 <br>
 <p><em>Click "Next" to begin the survey.</em></p>"""
     
