@@ -87,25 +87,35 @@ class QualtricsConverter:
             reader = csv.reader(f)
             all_rows = list(reader)
         
-        if len(all_rows) < 6:
-            raise ValueError("Expected at least 6 rows in Qualtrics CSV (header + metadata + scores)")
+        if len(all_rows) < 4:
+            raise ValueError("Expected at least 4 rows in Qualtrics CSV (header + question text + import IDs + at least one response)")
         
         header = all_rows[0]
         
         # Find score rows (skip header and metadata rows)
-        # Based on analysis: rows 5-8 contain actual scores
+        # Qualtrics format: Row 0=headers, Row 1=question text, Row 2=import IDs, Row 3+=responses
         score_rows = []
-        for i in range(5, len(all_rows)):
+        for i in range(3, len(all_rows)):
             row = all_rows[i]
             # Check if this row has actual scores (not metadata)
             if self._has_real_scores(header, row):
                 score_rows.append(row)
         
-        print(f"Found {len(score_rows)} annotator rows with scores")
-        
+        print(f"Found {len(score_rows)} responders in the input CSV file")
+
+        # Dynamically determine question numbers from CSV header
+        question_numbers = set()
+        for col in header:
+            # Match pattern Q{number}_{dimension}
+            match = re.match(r'Q(\d+)_\d+', col)
+            if match:
+                question_numbers.add(int(match.group(1)))
+
+        print(f"Found {len(question_numbers)} questions in CSV (Q1 to Q{max(question_numbers) if question_numbers else 0})")
+
         # Process each question
         assessments = []
-        for q_num in range(1, 226):  # Q1 to Q225
+        for q_num in sorted(question_numbers):
             if q_num not in self.question_to_sample_map:
                 print(f"Warning: No sample mapping for Q{q_num}")
                 continue
