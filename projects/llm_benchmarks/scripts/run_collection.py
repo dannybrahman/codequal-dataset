@@ -55,8 +55,8 @@ async def main():
     parser.add_argument("--list-models", action="store_true", help="List available models and exit")
     
     # Dataset options
-    parser.add_argument("--data-sources", nargs="+", 
-                       help="Specific data sources to evaluate (codeeval, codenet, codesearchnet, humaneval-x, mbpp)")
+    parser.add_argument("--data-sources", type=str,
+                       help="Specific data sources to evaluate. Comma-separated: codeeval,codenet,codesearchnet,humaneval-x,mbpp")
     parser.add_argument("--sets", default="test",
                        help="Dataset splits to process (default: test). Comma-separated: train,valid,test")
     parser.add_argument("--dataset-path", default="../dataset/generated/integrated", 
