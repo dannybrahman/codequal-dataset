@@ -81,13 +81,6 @@ class ModelConfigs:
             rate_limit=50,
             timeout=60
         ),
-        "claude-3-5-sonnet": ModelConfig(
-            name="claude-3-5-sonnet-20241022",
-            provider="anthropic",
-            api_key_env="ANTHROPIC_API_KEY",
-            rate_limit=50,
-            timeout=60
-        ),
         "claude-3-5-haiku": ModelConfig(
             name="claude-3-5-haiku-20241022",
             provider="anthropic", 

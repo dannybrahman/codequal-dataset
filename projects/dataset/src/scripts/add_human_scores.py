@@ -12,32 +12,88 @@ Usage:
 import json
 import csv
 import logging
-import statistics
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
 
 from ..processors.unified_schema import CodeSample, QualityScores
 
 
-def load_human_scores(input_file: str, aggregation_method: str = 'mean') -> Dict[Tuple[str, str], QualityScores]:
+def parse_human_score_ids(human_problem_id: str, human_submission_id: str) -> Tuple[str, str]:
+    """
+    Convert human score IDs to test set IDs.
+
+    Human scores use format:
+    - problem_id: "codeeval", "mbpp", "codesearchnet", "humaneval"
+    - submission_id: "{problem_info}_{submission_info}"
+
+    Test sets use format:
+    - problem_id: "{source}_{problem_info}"
+    - submission_id: "{source}_sub_{number}" or "{source}_{variant}_{number}"
+
+    Examples:
+        ("codeeval", "composition_composition_6_codeeval_sub_00416")
+        -> ("codeeval_composition_composition_6", "codeeval_sub_00416")
+
+        ("mbpp", "889_mbpp_sub_00888")
+        -> ("mbpp_889", "mbpp_sub_00888")
+
+        ("humaneval", "x_147_humaneval_x_python_147")
+        -> ("humaneval_x_147", "humaneval_x_python_147")
+    """
+    parts = human_submission_id.split('_')
+
+    try:
+        # Special handling for humaneval (format: x_147_humaneval_x_python_147)
+        if human_problem_id == 'humaneval':
+            # Extract problem number from "x_{num}_humaneval_x_..."
+            if len(parts) >= 4 and parts[0] == 'x':
+                problem_num = parts[1]
+                # Submission ID is everything from "humaneval" onwards
+                humaneval_idx = parts.index('humaneval')
+                test_submission_id = '_'.join(parts[humaneval_idx:])
+                test_problem_id = f"humaneval_x_{problem_num}"
+                return (test_problem_id, test_submission_id)
+
+        # Standard handling for sources with "sub" pattern
+        if 'sub' in parts:
+            sub_idx = parts.index('sub')
+            # Submission ID is source_sub_number
+            test_submission_id = f"{human_problem_id}_sub_{parts[sub_idx + 1]}"
+
+            # Problem ID is everything before the submission part
+            problem_info = '_'.join(parts[:sub_idx-1])  # Skip the source name before 'sub'
+            test_problem_id = f"{human_problem_id}_{problem_info}"
+
+            return (test_problem_id, test_submission_id)
+
+        # Fallback: return as-is
+        logging.warning(f"Unrecognized ID format: {human_problem_id}, {human_submission_id}")
+        return (human_problem_id, human_submission_id)
+
+    except (ValueError, IndexError) as e:
+        logging.warning(f"Failed to parse IDs: {human_problem_id}, {human_submission_id}: {e}")
+        return (human_problem_id, human_submission_id)
+
+
+def load_human_scores(input_file: str) -> Dict[Tuple[str, str], List[Dict[str, Any]]]:
     """
     Load human assessment scores from JSONL file with individual annotator scores.
-    
+
     Args:
         input_file: Path to JSONL with format:
                    {"problem_id": "...", "submission_id": "...", "scores": [{"annotator_id": "...", "quality_scores": {...}}]}
-        aggregation_method: How to aggregate multiple annotator scores ('mean' or 'median')
-    
+
     Returns:
-        Dictionary mapping (problem_id, submission_id) to QualityScores
+        Dictionary mapping (problem_id, submission_id) to list of annotator scores
+        Format: [{'annotator_id': str, 'scores': {...}}]
     """
     scores_dict = {}
     input_path = Path(input_file)
-    
+
     if not input_path.exists():
         raise FileNotFoundError(f"Human scores file not found: {input_file}")
-    
-    logging.info(f"Loading human assessment scores from {input_path} with {aggregation_method} aggregation")
+
+    logging.info(f"Loading human assessment scores from {input_path}")
     
     with open(input_path, 'r') as f:
         for line_num, line in enumerate(f, 1):
@@ -50,66 +106,67 @@ def load_human_scores(input_file: str, aggregation_method: str = 'mean') -> Dict
                 problem_id = data['problem_id']
                 submission_id = data['submission_id']
                 annotator_scores = data['scores']
-                
+
                 if not annotator_scores:
                     logging.warning(f"Line {line_num}: No annotator scores found for {problem_id}, {submission_id}")
                     continue
-                
-                # Extract scores by dimension
-                dimensions = ['functionality', 'readability', 'idiomatic', 'error_handling', 'efficiency']
-                aggregated_scores = {}
-                
-                for dim in dimensions:
-                    dim_scores = []
-                    for annotator in annotator_scores:
-                        if 'quality_scores' in annotator and dim in annotator['quality_scores']:
-                            score = annotator['quality_scores'][dim]
-                            if score is not None:
-                                dim_scores.append(float(score))
-                    
-                    if dim_scores:
-                        if aggregation_method == 'mean':
-                            aggregated_scores[dim] = statistics.mean(dim_scores)
-                        elif aggregation_method == 'median':
-                            aggregated_scores[dim] = statistics.median(dim_scores)
-                        else:
-                            raise ValueError(f"Unsupported aggregation method: {aggregation_method}")
-                    else:
-                        logging.warning(f"Line {line_num}: No valid scores for dimension '{dim}' in {problem_id}, {submission_id}")
-                        aggregated_scores[dim] = None
-                
-                # Only create QualityScores if we have all dimensions
-                if all(score is not None for score in aggregated_scores.values()):
-                    quality_scores = QualityScores(
-                        functionality=aggregated_scores['functionality'],
-                        readability=aggregated_scores['readability'], 
-                        idiomatic=aggregated_scores['idiomatic'],
-                        error_handling=aggregated_scores['error_handling'],
-                        efficiency=aggregated_scores['efficiency']
-                    )
-                    
-                    key = (problem_id, submission_id)
-                    scores_dict[key] = quality_scores
+
+                # Convert human score IDs to test set IDs
+                test_problem_id, test_submission_id = parse_human_score_ids(problem_id, submission_id)
+                key = (test_problem_id, test_submission_id)
+
+                # Store individual annotator scores (no aggregation)
+                annotator_score_list = []
+
+                for annotator in annotator_scores:
+                    if 'annotator_id' not in annotator or 'quality_scores' not in annotator:
+                        logging.warning(f"Line {line_num}: Missing annotator_id or quality_scores")
+                        continue
+
+                    qs = annotator['quality_scores']
+
+                    # Validate all dimensions are present
+                    dimensions = ['functionality', 'readability', 'idiomatic', 'error_handling', 'efficiency']
+                    if not all(dim in qs and qs[dim] is not None for dim in dimensions):
+                        logging.warning(f"Line {line_num}: Incomplete scores for annotator {annotator['annotator_id']}")
+                        continue
+
+                    # Create annotator score entry
+                    annotator_entry = {
+                        'annotator_id': annotator['annotator_id'],
+                        'scores': {
+                            'functionality': float(qs['functionality']),
+                            'readability': float(qs['readability']),
+                            'idiomatic': float(qs['idiomatic']),
+                            'error_handling': float(qs['error_handling']),
+                            'efficiency': float(qs['efficiency'])
+                        }
+                    }
+                    annotator_score_list.append(annotator_entry)
+
+                if annotator_score_list:
+                    scores_dict[key] = annotator_score_list
                 else:
-                    logging.warning(f"Line {line_num}: Incomplete scores for {problem_id}, {submission_id}")
+                    logging.warning(f"Line {line_num}: No valid annotator scores for {problem_id}, {submission_id}")
                 
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 logging.warning(f"Line {line_num}: Skipping invalid line: {e}")
                 continue
     
-    logging.info(f"Loaded {len(scores_dict)} human assessment scores using {aggregation_method} aggregation")
+    total_annotators = sum(len(annotators) for annotators in scores_dict.values())
+    logging.info(f"Loaded {len(scores_dict)} samples with {total_annotators} total annotator scores")
     return scores_dict
 
 
-def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str, str], QualityScores]) -> Dict[str, Any]:
+def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str, str], List[Dict[str, Any]]]) -> Dict[str, Any]:
     """
     Update the test.jsonl file with human assessment scores.
     Removes samples without human annotations to ensure 100% coverage.
-    
+
     Args:
         source: Source dataset name (e.g., 'codenet', 'codeeval')
-        human_scores: Dictionary mapping (problem_id, submission_id) to QualityScores
-    
+        human_scores: Dictionary mapping (problem_id, submission_id) to list of annotator scores
+
     Returns:
         Dictionary with update statistics
     """
@@ -136,13 +193,29 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
     # Separate samples into annotated and unannotated
     annotated_samples = []
     removed_samples = []
-    
+
     for sample in original_samples:
         key = (sample.problem_id, sample.submission_id)
-        
+
         if key in human_scores:
-            # Update with human scores
-            sample.quality_scores = human_scores[key]
+            # Initialize human_scores list if not present
+            if not hasattr(sample, 'human_scores') or sample.human_scores is None:
+                sample.human_scores = []
+
+            # Get list of annotator scores for this sample
+            annotator_scores = human_scores[key]
+
+            # Process each annotator's scores
+            for annotator_entry in annotator_scores:
+                # Remove existing scores for this annotator (overwrite)
+                sample.human_scores = [
+                    score for score in sample.human_scores
+                    if score.get('annotator_id') != annotator_entry['annotator_id']
+                ]
+
+                # Add new scores
+                sample.human_scores.append(annotator_entry)
+
             # Update metadata to indicate human assessment
             if sample.metadata is None:
                 sample.metadata = {}
@@ -186,11 +259,27 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
     if metadata_file.exists():
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
-        
+
         # Update split counts (test set size changed)
-        original_test_count = metadata['splits']['test']
-        metadata['splits']['test'] = len(final_samples)
-        metadata['total_samples'] = metadata['splits']['train'] + metadata['splits']['valid'] + len(final_samples)
+        # Handle both metadata formats: 'test' or 'test_size'
+        if 'test' in metadata['splits']:
+            original_test_count = metadata['splits']['test']
+            metadata['splits']['test'] = len(final_samples)
+            train_count = metadata['splits'].get('train', 0)
+            valid_count = metadata['splits'].get('valid', 0)
+        elif 'test_size' in metadata['splits']:
+            original_test_count = metadata['splits']['test_size']
+            metadata['splits']['test_size'] = len(final_samples)
+            train_count = metadata['splits'].get('train_size', 0)
+            valid_count = metadata['splits'].get('valid_size', 0)
+        else:
+            logging.warning(f"Unknown metadata format, skipping total_samples update")
+            original_test_count = len(original_samples)
+            train_count = 0
+            valid_count = 0
+
+        if train_count or valid_count:
+            metadata['total_samples'] = train_count + valid_count + len(final_samples)
         
         # Add human assessment info
         metadata['human_assessment'] = {
@@ -234,30 +323,28 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
     return results
 
 
-def add_human_scores_to_dataset(source: str, input_path: str, aggregation_method: str = 'mean') -> Dict[str, Any]:
+def add_human_scores_to_dataset(source: str, input_path: str) -> Dict[str, Any]:
     """
     Main function to add human scores to integrated dataset.
-    
+
     Args:
         source: Source dataset name
         input_path: Path to human scores JSONL file
-        aggregation_method: How to aggregate multiple annotator scores ('mean' or 'median')
-        
+
     Returns:
         Dictionary with operation results
     """
-    logging.info(f"Adding human scores to {source} dataset using {aggregation_method} aggregation")
-    
-    # Load human scores
-    human_scores = load_human_scores(input_path, aggregation_method)
-    
+    logging.info(f"Adding human scores to {source} dataset")
+
+    # Load human scores (individual annotator scores, no aggregation)
+    human_scores = load_human_scores(input_path)
+
     if not human_scores:
         raise ValueError("No valid human scores found in input file")
-    
+
     # Update test set
     results = update_test_set_with_human_scores(source, human_scores)
-    results['aggregation_method'] = aggregation_method
-    
+
     return results
 
 

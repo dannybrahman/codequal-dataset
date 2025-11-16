@@ -70,6 +70,8 @@ class CodeSample:
     quality_scores: Optional[QualityScores] = None  # 5-dimensional quality assessment (optional for pre-assessment)
     source: str = "codeeval"  # Data source: "codequal", "codeeval", "codecontests", "mbpp", "github"
     metadata: Dict[str, Any] = None  # Source-specific metadata
+    llm_scores: Optional[List[Dict[str, Any]]] = None  # LLM assessment scores: [{'model_name': str, 'scores': QualityScores}]
+    human_scores: Optional[List[Dict[str, Any]]] = None  # Human assessment scores: [{'annotator_id': str, 'scores': QualityScores}]
     
     def __post_init__(self):
         """Validate required fields."""
@@ -86,7 +88,7 @@ class CodeSample:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             'problem_id': self.problem_id,
             'problem': self.problem,
             'submission_id': self.submission_id,
@@ -95,6 +97,16 @@ class CodeSample:
             'source': self.source,
             'metadata': self.metadata
         }
+
+        # Only include llm_scores if present
+        if self.llm_scores is not None:
+            result['llm_scores'] = self.llm_scores
+
+        # Only include human_scores if present
+        if self.human_scores is not None:
+            result['human_scores'] = self.human_scores
+
+        return result
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'CodeSample':
@@ -102,7 +114,7 @@ class CodeSample:
         quality_scores = None
         if data.get('quality_scores'):
             quality_scores = QualityScores.from_dict(data['quality_scores'])
-        
+
         return cls(
             problem_id=data['problem_id'],
             problem=data['problem'],
@@ -110,7 +122,9 @@ class CodeSample:
             submission=data['submission'],
             quality_scores=quality_scores,
             source=data['source'],
-            metadata=data.get('metadata', {})
+            metadata=data.get('metadata', {}),
+            llm_scores=data.get('llm_scores'),
+            human_scores=data.get('human_scores')
         )
     
     def to_jsonl_line(self) -> str:

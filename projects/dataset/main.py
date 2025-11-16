@@ -3,20 +3,24 @@
 CodeQual Dataset - Main CLI Entry Point
 
 Enhanced CodeQual dataset creation toolkit with 5-dimensional continuous quality scoring.
-Handles dataset integration, analysis, and human annotation integration.
+Handles dataset integration, analysis, human annotation integration, and LLM assessment integration.
 
 Examples:
   # Dataset Integration
   python main.py integrate --source codenet --input-path /path/to/codenet/data
   python main.py integrate --source codeeval --input-path /path/to/codeeval/data
   python main.py integrate --source codesearchnet --input-path /path/to/codesearchnet/data
-  
+
   # Dataset Analysis (for sampling strategy design)
   python main.py analyze --source codesearchnet
-  
-  # Human Annotation Integration (adds human scores to datasets)
-  python main.py add-human-scores --source codenet --input-path human_scores_detailed.jsonl --method median
-  python main.py add-human-scores --source codeeval --input-path codeeval_human_scores.jsonl --method mean
+
+  # Human Annotation Integration (stores individual annotator scores)
+  python main.py add-human-scores --source codenet --input-path human_scores.jsonl
+  python main.py add-human-scores --source codeeval --source mbpp --input-path multi_source_scores.jsonl
+
+  # LLM Assessment Integration (stores individual model scores)
+  python main.py add-llm-scores --input-path projects/llm_benchmarks/generated/session_XXX --split test
+  python main.py add-llm-scores --input-path session_dir --split test --sources codeeval mbpp
 """
 
 import argparse
@@ -29,6 +33,7 @@ from src.scripts import (
     run_integration, validate_source_data, get_available_sources
 )
 from src.scripts.add_human_scores import add_human_scores_to_dataset, validate_human_assessment_setup
+from src.scripts.add_llm_scores import add_llm_scores_to_datasets, validate_llm_scores_setup
 
 
 def setup_logging(level: str = "INFO"):
@@ -91,17 +96,29 @@ def main():
         'add-human-scores',
         help='Add human annotation scores to integrated datasets'
     )
-    human_parser.add_argument('--source', required=True,
-                             help='Source dataset name (must match integrated data)')
+    human_parser.add_argument('--source', action='append', dest='sources',
+                             help='Source dataset name (can specify multiple times)')
     human_parser.add_argument('--input-path', required=True,
                              help='Path to JSONL file with human scores')
-    human_parser.add_argument('--method', default='mean', choices=['mean', 'median'],
-                             help='Aggregation method for multiple annotator scores (default: mean)')
     human_parser.add_argument('--split', default='all',
                              choices=['train', 'valid', 'test', 'all'],
                              help='Which split to process (default: all)')
     human_parser.set_defaults(workflow='add-human-scores')
-    
+
+    # LLM scores integration workflow
+    llm_parser = subparsers.add_parser(
+        'add-llm-scores',
+        help='Add LLM assessment scores to integrated datasets'
+    )
+    llm_parser.add_argument('--input-path', required=True,
+                           help='Path to LLM scores directory (e.g., projects/llm_benchmarks/generated/session_XXX)')
+    llm_parser.add_argument('--split', required=True,
+                           choices=['train', 'valid', 'test'],
+                           help='Which dataset split to update')
+    llm_parser.add_argument('--sources', nargs='+',
+                           help='Specific sources to process (if not specified, processes all found)')
+    llm_parser.set_defaults(workflow='add-llm-scores')
+
     # Dataset analysis workflow
     analyze_parser = subparsers.add_parser(
         'analyze',
@@ -131,6 +148,8 @@ def main():
             return run_integration_workflow(args)
         elif args.workflow == 'add-human-scores':
             return add_human_scores_workflow(args)
+        elif args.workflow == 'add-llm-scores':
+            return add_llm_scores_workflow(args)
         elif args.workflow == 'analyze':
             return analyze_dataset_workflow(args)
         else:
@@ -199,43 +218,120 @@ def run_integration_workflow(args):
 def add_human_scores_workflow(args):
     """Run human assessment workflow - add human scores to test set."""
     logger = logging.getLogger(__name__)
-    
+
     # Validate required arguments
     if not args.input_path:
         logger.error("--input-path is required for human assessment")
         return 1
-    
-    # Validate setup
-    if not validate_human_assessment_setup(args.source, args.input_path):
-        return 1
-    
-    # Run human assessment
-    logger.info(f"Starting human assessment workflow for {args.source}")
-    logger.info(f"Loading human scores from: {args.input_path}")
-    logger.info(f"Using aggregation method: {args.method}")
-    
-    try:
-        results = add_human_scores_to_dataset(args.source, args.input_path, args.method)
-        
-        logger.info("Human assessment workflow completed!")
-        logger.info(f"Aggregation method: {results['aggregation_method']}")
-        logger.info(f"Updated test set: {results['test_file']}")
-        logger.info(f"Original test samples: {results['original_test_samples']}")
-        logger.info(f"Final test samples: {results['final_test_samples']}")
-        logger.info(f"Updated with human scores: {results['updated_samples']}")
-        logger.info(f"Coverage: {results['coverage_percentage']:.1f}%")
-        logger.info(f"Backup created: {results['backup_file']}")
-        
-        if results['removed_samples'] > 0:
-            logger.warning(f"Removed {results['removed_samples']} samples without human annotations")
-            logger.info("Test set now has 100% human annotation coverage")
-        
-        return 0
-        
-    except Exception as e:
-        logger.error(f"Human assessment workflow failed: {e}")
+
+    if not args.sources:
+        logger.error("--source is required (can specify multiple times)")
         return 1
 
+    # Process each source
+    all_results = []
+    failed_sources = []
+
+    for source in args.sources:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Processing source: {source}")
+        logger.info(f"{'='*60}")
+
+        # Validate setup
+        if not validate_human_assessment_setup(source, args.input_path):
+            logger.error(f"Validation failed for source: {source}")
+            failed_sources.append(source)
+            continue
+
+        # Run human assessment
+        logger.info(f"Starting human assessment workflow for {source}")
+        logger.info(f"Loading human scores from: {args.input_path}")
+
+        try:
+            results = add_human_scores_to_dataset(source, args.input_path)
+            all_results.append(results)
+
+            logger.info(f"Human assessment workflow completed for {source}!")
+            logger.info(f"Updated test set: {results['test_file']}")
+            logger.info(f"Original test samples: {results['original_test_samples']}")
+            logger.info(f"Final test samples: {results['final_test_samples']}")
+            logger.info(f"Updated with human scores: {results['updated_samples']}")
+            logger.info(f"Coverage: {results['coverage_percentage']:.1f}%")
+            logger.info(f"Backup created: {results['backup_file']}")
+
+            if results['removed_samples'] > 0:
+                logger.warning(f"Removed {results['removed_samples']} samples without human annotations")
+                logger.info("Test set now has 100% human annotation coverage")
+
+        except Exception as e:
+            logger.error(f"Human assessment workflow failed for {source}: {e}")
+            failed_sources.append(source)
+            continue
+
+    # Summary
+    logger.info(f"\n{'='*60}")
+    logger.info(f"SUMMARY: Processed {len(args.sources)} sources")
+    logger.info(f"{'='*60}")
+    logger.info(f"Successful: {len(all_results)}")
+    if failed_sources:
+        logger.error(f"Failed: {len(failed_sources)} - {', '.join(failed_sources)}")
+
+    for result in all_results:
+        logger.info(f"\n{result['source']}:")
+        logger.info(f"  Updated samples: {result['updated_samples']}")
+        logger.info(f"  Removed samples: {result['removed_samples']}")
+        logger.info(f"  Final test samples: {result['final_test_samples']}")
+
+    return 1 if failed_sources else 0
+
+
+def add_llm_scores_workflow(args):
+    """Run LLM scores integration workflow - add LLM assessment scores to dataset split."""
+    logger = logging.getLogger(__name__)
+
+    # Validate required arguments
+    if not args.input_path:
+        logger.error("--input-path is required for LLM scores integration")
+        return 1
+
+    # Validate setup
+    if not validate_llm_scores_setup(args.input_path):
+        return 1
+
+    logger.info(f"Starting LLM scores integration workflow")
+    logger.info(f"Input directory: {args.input_path}")
+    logger.info(f"Target split: {args.split}")
+    if args.sources:
+        logger.info(f"Processing sources: {', '.join(args.sources)}")
+
+    try:
+        results = add_llm_scores_to_datasets(
+            input_path=args.input_path,
+            split=args.split,
+            sources=args.sources
+        )
+
+        logger.info("\n" + "="*60)
+        logger.info("LLM SCORES INTEGRATION SUMMARY")
+        logger.info("="*60)
+        logger.info(f"Total sources processed: {results['sources_processed']}")
+        logger.info(f"Total models integrated: {results['total_models']}")
+        logger.info(f"Total samples updated: {results['total_samples_updated']}")
+
+        for source_result in results['source_results']:
+            logger.info(f"\n{source_result['source']}:")
+            logger.info(f"  Models: {', '.join(source_result['models'])}")
+            logger.info(f"  Samples updated: {source_result['samples_updated']}")
+            logger.info(f"  Coverage: {source_result['coverage_percentage']:.1f}%")
+            logger.info(f"  Updated file: {source_result['updated_file']}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"LLM scores integration workflow failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
 
 
 def analyze_dataset_workflow(args):
