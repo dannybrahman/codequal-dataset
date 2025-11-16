@@ -259,9 +259,9 @@ def add_human_scores_workflow(args):
             logger.info(f"Coverage: {results['coverage_percentage']:.1f}%")
             logger.info(f"Backup created: {results['backup_file']}")
 
-            if results['removed_samples'] > 0:
-                logger.warning(f"Removed {results['removed_samples']} samples without human annotations")
-                logger.info("Test set now has 100% human annotation coverage")
+            if results['samples_without_scores'] > 0:
+                logger.info(f"{results['samples_without_scores']} samples without human scores (kept in test set)")
+                logger.info(f"Coverage: {results['coverage_percentage']:.1f}%")
 
         except Exception as e:
             logger.error(f"Human assessment workflow failed for {source}: {e}")
@@ -279,7 +279,7 @@ def add_human_scores_workflow(args):
     for result in all_results:
         logger.info(f"\n{result['source']}:")
         logger.info(f"  Updated samples: {result['updated_samples']}")
-        logger.info(f"  Removed samples: {result['removed_samples']}")
+        logger.info(f"  Samples without scores: {result['samples_without_scores']}")
         logger.info(f"  Final test samples: {result['final_test_samples']}")
 
     return 1 if failed_sources else 0

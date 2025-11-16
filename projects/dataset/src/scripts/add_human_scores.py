@@ -39,7 +39,15 @@ def parse_human_score_ids(human_problem_id: str, human_submission_id: str) -> Tu
 
         ("humaneval", "x_147_humaneval_x_python_147")
         -> ("humaneval_x_147", "humaneval_x_python_147")
+
+        ("p03838", "s814078068")  # CodeNet format
+        -> ("p03838", "s814078068")
     """
+    # Special handling for CodeNet (format: p#####, s#########)
+    if human_problem_id.startswith('p') and human_submission_id.startswith('s'):
+        # CodeNet IDs are already in the correct format
+        return (human_problem_id, human_submission_id)
+
     parts = human_submission_id.split('_')
 
     try:
@@ -189,10 +197,10 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
                 original_samples.append(sample)
     
     logging.info(f"Loaded {len(original_samples)} samples from test set")
-    
-    # Separate samples into annotated and unannotated
-    annotated_samples = []
-    removed_samples = []
+
+    # Update samples with human scores (keep all samples)
+    samples_updated = 0
+    samples_without_scores = 0
 
     for sample in original_samples:
         key = (sample.problem_id, sample.submission_id)
@@ -221,25 +229,17 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
                 sample.metadata = {}
             sample.metadata['assessment_method'] = 'human_annotation'
             sample.metadata['human_annotated'] = True
-            annotated_samples.append(sample)
+            samples_updated += 1
         else:
-            # Track removed samples for metadata
-            removed_samples.append({
-                'problem_id': sample.problem_id,
-                'submission_id': sample.submission_id,
-                'reason': 'no_human_annotation'
-            })
-    
-    logging.info(f"Samples with human scores: {len(annotated_samples)}")
-    logging.info(f"Samples removed (no annotation): {len(removed_samples)}")
-    
-    if removed_samples:
-        logging.warning(f"Removing {len(removed_samples)} samples without human annotations:")
-        for removed in removed_samples:
-            logging.warning(f"  - {removed['problem_id']}, {removed['submission_id']}")
-    
-    # Only keep annotated samples (100% human coverage)
-    final_samples = annotated_samples
+            # Sample doesn't have human scores - keep it as is
+            samples_without_scores += 1
+
+    logging.info(f"Samples with human scores: {samples_updated}")
+    logging.info(f"Samples without human scores: {samples_without_scores}")
+    logging.info(f"Total samples kept: {len(original_samples)}")
+
+    # Keep ALL samples (both annotated and unannotated)
+    final_samples = original_samples
     
     # Save updated test set
     backup_file = test_file.with_suffix('.backup.jsonl')
@@ -249,27 +249,28 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
     import shutil
     shutil.copy2(test_file, backup_file)
     
-    # Write updated test set (only annotated samples)
+    # Write updated test set (all samples with updated human scores where available)
     with open(test_file, 'w') as f:
         for sample in final_samples:
             f.write(sample.to_jsonl_line() + '\n')
-    
+
+    # Calculate coverage percentage
+    coverage_pct = (samples_updated / len(final_samples) * 100) if final_samples else 0
+
     # Update metadata file
     metadata_file = integrated_path / "metadata.json"
     if metadata_file.exists():
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
 
-        # Update split counts (test set size changed)
+        # Update split counts (test set size unchanged)
         # Handle both metadata formats: 'test' or 'test_size'
         if 'test' in metadata['splits']:
             original_test_count = metadata['splits']['test']
-            metadata['splits']['test'] = len(final_samples)
             train_count = metadata['splits'].get('train', 0)
             valid_count = metadata['splits'].get('valid', 0)
         elif 'test_size' in metadata['splits']:
             original_test_count = metadata['splits']['test_size']
-            metadata['splits']['test_size'] = len(final_samples)
             train_count = metadata['splits'].get('train_size', 0)
             valid_count = metadata['splits'].get('valid_size', 0)
         else:
@@ -278,45 +279,36 @@ def update_test_set_with_human_scores(source: str, human_scores: Dict[Tuple[str,
             train_count = 0
             valid_count = 0
 
-        if train_count or valid_count:
-            metadata['total_samples'] = train_count + valid_count + len(final_samples)
-        
         # Add human assessment info
         metadata['human_assessment'] = {
             'enabled': True,
             'test_set_updated': True,
-            'samples_with_human_scores': len(annotated_samples),
-            'samples_removed_no_annotation': len(removed_samples),
-            'coverage_percentage': 100.0,  # Always 100% after cleanup
+            'samples_with_human_scores': samples_updated,
+            'samples_without_human_scores': samples_without_scores,
+            'coverage_percentage': coverage_pct,
             'original_test_size': original_test_count,
             'final_test_size': len(final_samples)
         }
-        
-        # Add details about removed samples
-        if removed_samples:
-            metadata['human_assessment']['removed_samples'] = removed_samples
-        
+
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
-    
+
     results = {
         'source': source,
         'test_file': str(test_file),
         'backup_file': str(backup_file),
         'original_test_samples': len(original_samples),
         'final_test_samples': len(final_samples),
-        'updated_samples': len(annotated_samples),
-        'removed_samples': len(removed_samples),
-        'coverage_percentage': 100.0,  # Always 100% after cleanup
-        'human_scores_available': len(human_scores),
-        'removed_sample_details': removed_samples
+        'updated_samples': samples_updated,
+        'samples_without_scores': samples_without_scores,
+        'coverage_percentage': coverage_pct,
+        'human_scores_available': len(human_scores)
     }
-    
+
     logging.info(f"Human score update completed:")
-    logging.info(f"  Original test samples: {results['original_test_samples']}")
-    logging.info(f"  Final test samples: {results['final_test_samples']}")
+    logging.info(f"  Total test samples: {results['final_test_samples']}")
     logging.info(f"  Updated with human scores: {results['updated_samples']}")
-    logging.info(f"  Removed (no annotation): {results['removed_samples']}")
+    logging.info(f"  Without human scores: {results['samples_without_scores']}")
     logging.info(f"  Coverage: {results['coverage_percentage']:.1f}%")
     logging.info(f"  Backup created: {backup_file}")
     
