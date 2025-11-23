@@ -6,7 +6,9 @@ their characteristics and inform sampling strategies.
 """
 
 from .codesearchnet_analyzer import CodeSearchNetAnalyzer
+from .llm_human_agreement import LLMHumanAgreementAnalyzer
 
 __all__ = [
-    'CodeSearchNetAnalyzer'
+    'CodeSearchNetAnalyzer',
+    'LLMHumanAgreementAnalyzer'
 ]

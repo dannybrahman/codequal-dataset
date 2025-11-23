@@ -131,7 +131,23 @@ def main():
     analyze_parser.add_argument('--output-dir',
                                help='Output directory for analysis results (default: generated/analysis/{source})')
     analyze_parser.set_defaults(workflow='analyze')
-    
+
+    # LLM-Human Agreement Analysis workflow
+    agreement_parser = subparsers.add_parser(
+        'analyze-agreement',
+        help='Analyze inter-human agreement (baseline) and LLM-human agreement'
+    )
+    agreement_parser.add_argument('--sources', nargs='+', required=True,
+                                 help='Source dataset names to analyze (e.g., codenet codeeval)')
+    agreement_parser.add_argument('--output-dir',
+                                 default='generated/analysis/agreement',
+                                 help='Output directory for analysis results')
+    agreement_parser.add_argument('--human-methods', nargs='+',
+                                 default=['mean', 'median'],
+                                 choices=['mean', 'median'],
+                                 help='Human score aggregation methods')
+    agreement_parser.set_defaults(workflow='analyze-agreement')
+
     args = parser.parse_args()
     
     if not args.workflow:
@@ -152,6 +168,8 @@ def main():
             return add_llm_scores_workflow(args)
         elif args.workflow == 'analyze':
             return analyze_dataset_workflow(args)
+        elif args.workflow == 'analyze-agreement':
+            return analyze_agreement_workflow(args)
         else:
             logger.error(f"Unknown workflow: {args.workflow}")
             return 1
@@ -379,6 +397,49 @@ def analyze_dataset_workflow(args):
         
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
+        return 1
+
+
+def analyze_agreement_workflow(args):
+    """Run LLM-human agreement analysis workflow."""
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"\n{'='*70}")
+    logger.info("LLM-HUMAN AGREEMENT ANALYSIS")
+    logger.info(f"{'='*70}")
+    logger.info(f"Sources: {', '.join(args.sources)}")
+    logger.info(f"Human aggregation methods: {', '.join(args.human_methods)}")
+    logger.info(f"Output directory: {args.output_dir}")
+
+    # Import analyzer
+    from src.analyzers import LLMHumanAgreementAnalyzer
+
+    try:
+        # Create analyzer
+        analyzer = LLMHumanAgreementAnalyzer(output_dir=args.output_dir)
+
+        # Run complete analysis
+        analyzer.run_complete_analysis(
+            sources=args.sources,
+            human_methods=args.human_methods
+        )
+
+        logger.info(f"\n{'='*70}")
+        logger.info("AGREEMENT ANALYSIS COMPLETED SUCCESSFULLY!")
+        logger.info(f"{'='*70}")
+        logger.info(f"Results saved to: {args.output_dir}")
+        logger.info("\nKey outputs:")
+        logger.info("  - inter_human_agreement/                    (baseline reliability)")
+        logger.info("  - llm_human_agreement/{source}/{method}/    (per-source analysis)")
+        logger.info("  - llm_human_agreement/cross_source/{method}/ (cross-source analysis)")
+        logger.info("  - llm_human_agreement/summary/{method}/     (publication tables)")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Agreement analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 
