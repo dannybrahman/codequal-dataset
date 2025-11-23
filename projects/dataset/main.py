@@ -148,6 +148,20 @@ def main():
                                  help='Human score aggregation methods')
     agreement_parser.set_defaults(workflow='analyze-agreement')
 
+    # View LLM-Human Agreement Results
+    view_llm_parser = subparsers.add_parser(
+        'view-llm-human',
+        help='View LLM-human agreement analysis results'
+    )
+    view_llm_parser.set_defaults(workflow='view-llm-human')
+
+    # View Inter-Human Agreement Results
+    view_inter_parser = subparsers.add_parser(
+        'view-inter-human',
+        help='View inter-human agreement summary'
+    )
+    view_inter_parser.set_defaults(workflow='view-inter-human')
+
     args = parser.parse_args()
     
     if not args.workflow:
@@ -170,6 +184,14 @@ def main():
             return analyze_dataset_workflow(args)
         elif args.workflow == 'analyze-agreement':
             return analyze_agreement_workflow(args)
+        elif args.workflow == 'view-llm-human':
+            from src.viewers import view_llm_human_agreement
+            view_llm_human_agreement()
+            return 0
+        elif args.workflow == 'view-inter-human':
+            from src.viewers import view_inter_human_agreement
+            view_inter_human_agreement()
+            return 0
         else:
             logger.error(f"Unknown workflow: {args.workflow}")
             return 1
