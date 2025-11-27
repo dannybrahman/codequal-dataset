@@ -252,14 +252,20 @@ class ProgressTracker:
         
         current_progress = self.progresses[-1]
         
-        # Update status based on completion
-        if (current_progress.completed_tasks == current_progress.total_tasks and 
+        # Update status based on completion and failures
+        # Status is determined by the most recent run's results
+        if (current_progress.completed_tasks == current_progress.total_tasks and
             current_progress.total_tasks > 0):
-            # Set status to "failed" if there are any failed tasks, otherwise "completed"
+            # All tasks in this run have been attempted
             if current_progress.failed_tasks > 0:
+                # Has failures - mark as "failed" to allow resume
                 self.session_metadata["status"] = "failed"
             else:
+                # All successful - mark as "completed"
                 self.session_metadata["status"] = "completed"
+        elif current_progress.completed_tasks > 0:
+            # Partially complete - still in progress
+            self.session_metadata["status"] = "in_progress"
         
         progress_data = {
             **self.session_metadata,

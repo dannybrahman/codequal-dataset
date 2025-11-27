@@ -72,46 +72,58 @@ class SolutionCollectionRunner:
         self.problems: List[Dict] = []
         self.session_id: Optional[str] = None
     
-    def load_problems(self, data_sources: Optional[List[str]] = None, sets: Optional[List[str]] = None) -> int:
+    def load_problems(self, data_sources: Optional[List[str]] = None, sets: Optional[List[str]] = None,
+                       sample_ids_filter: Optional[Dict[str, set]] = None) -> int:
         """
         Load samples from integrated dataset files
-        
+
         Args:
             data_sources: List of data sources to include (None for all: codeeval, codenet, codesearchnet, humaneval-x, mbpp)
             sets: List of dataset splits to load (default: ["test"])
-            
+            sample_ids_filter: Optional dict mapping source -> set of submission_ids to include
+
         Returns:
             Number of samples loaded
         """
         self.problems = []
-        
+
         # Default data sources if none specified
         available_data_sources = ['codeeval', 'codenet', 'codesearchnet', 'humaneval-x', 'mbpp']
         if data_sources is None:
             data_sources = available_data_sources
-        
+
         # Default sets if none specified
         if sets is None:
             sets = ["test"]
-        
+
         # Load from integrated dataset files
         base_path = Path("../dataset/generated/integrated")
-        
+
         for data_source in data_sources:
             for dataset_set in sets:
                 dataset_file = base_path / data_source / f"{dataset_set}.jsonl"
-                
+
                 # Skip if dataset file doesn't exist
                 if not dataset_file.exists():
                     self.logger.warning(f"Dataset file not found: {dataset_file}")
                     continue
-                
+
+                # Get filter for this source if provided
+                source_filter = sample_ids_filter.get(data_source) if sample_ids_filter else None
+
                 try:
                     with open(dataset_file, 'r') as f:
                         for line_num, line in enumerate(f, 1):
                             if line.strip():
                                 try:
                                     sample = json.loads(line)
+
+                                    # Apply sample ID filter if provided
+                                    if source_filter:
+                                        submission_id = sample.get('submission_id', sample.get('problem_id', ''))
+                                        if submission_id not in source_filter:
+                                            continue
+
                                     sample['data_source'] = data_source
                                     sample['dataset_set'] = dataset_set
                                     sample['source_file'] = str(dataset_file)
@@ -119,12 +131,13 @@ class SolutionCollectionRunner:
                                     self.problems.append(sample)
                                 except json.JSONDecodeError as e:
                                     self.logger.warning(f"Invalid JSON in {dataset_file}:{line_num}: {e}")
-                                    
+
                 except Exception as e:
                     self.logger.error(f"Failed to load {dataset_file}: {e}")
-        
+
         sets_str = ", ".join(sets)
-        self.logger.info(f"Loaded {len(self.problems)} samples from {len(data_sources)} data sources ({sets_str} sets)")
+        filter_msg = f" (filtered to {sum(len(v) for v in sample_ids_filter.values())} sample IDs)" if sample_ids_filter else ""
+        self.logger.info(f"Loaded {len(self.problems)} samples from {len(data_sources)} data sources ({sets_str} sets){filter_msg}")
         return len(self.problems)
     
     def _filter_for_quick_test(self, data_sources: Optional[List[str]] = None) -> List[Dict]:
@@ -323,10 +336,14 @@ class SolutionCollectionRunner:
         try:
             # Process in batches
             await self._process_batches(progress_callback, resume_session=resume_session)
-            
-            # Finalize collection
-            collection_summary = self._finalize_collection(start_time, True)
-            
+
+            # Check if there were any failed tasks
+            failed_tasks = self.progress_tracker.get_failed_task_ids()
+            has_failures = len(failed_tasks) > 0
+
+            # Finalize collection (mark as failed if there were task failures)
+            collection_summary = self._finalize_collection(start_time, success=not has_failures)
+
             return collection_summary
             
         except Exception as e:

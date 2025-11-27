@@ -34,6 +34,7 @@ from src.scripts import (
 )
 from src.scripts.add_human_scores import add_human_scores_to_dataset, validate_human_assessment_setup
 from src.scripts.add_llm_scores import add_llm_scores_to_datasets, validate_llm_scores_setup
+from src.scripts.remove_llm_scores import remove_llm_scores_from_datasets, get_models_in_dataset, get_available_sources as get_integrated_sources
 
 
 def setup_logging(level: str = "INFO"):
@@ -119,6 +120,20 @@ def main():
                            help='Specific sources to process (if not specified, processes all found)')
     llm_parser.set_defaults(workflow='add-llm-scores')
 
+    # LLM scores removal workflow
+    remove_llm_parser = subparsers.add_parser(
+        'remove-llm-scores',
+        help='Remove LLM assessment scores from integrated datasets'
+    )
+    remove_llm_parser.add_argument('--split', required=True,
+                                   choices=['train', 'valid', 'test'],
+                                   help='Which dataset split to update')
+    remove_llm_parser.add_argument('--sources', nargs='+',
+                                   help='Specific sources to process (if not specified, processes all)')
+    remove_llm_parser.add_argument('--models', nargs='+',
+                                   help='Specific models to remove (if not specified, removes all LLM scores)')
+    remove_llm_parser.set_defaults(workflow='remove-llm-scores')
+
     # Dataset analysis workflow
     analyze_parser = subparsers.add_parser(
         'analyze',
@@ -162,6 +177,18 @@ def main():
     )
     view_inter_parser.set_defaults(workflow='view-inter-human')
 
+    # Coverage Analysis workflow
+    coverage_parser = subparsers.add_parser(
+        'analyze-coverage',
+        help='Analyze coverage of human and LLM scores across datasets'
+    )
+    coverage_parser.add_argument('--split', required=True,
+                                 choices=['train', 'valid', 'test'],
+                                 help='Which dataset split to analyze')
+    coverage_parser.add_argument('--sources', nargs='+',
+                                 help='Specific sources to analyze (if not specified, analyzes all)')
+    coverage_parser.set_defaults(workflow='analyze-coverage')
+
     args = parser.parse_args()
     
     if not args.workflow:
@@ -180,6 +207,8 @@ def main():
             return add_human_scores_workflow(args)
         elif args.workflow == 'add-llm-scores':
             return add_llm_scores_workflow(args)
+        elif args.workflow == 'remove-llm-scores':
+            return remove_llm_scores_workflow(args)
         elif args.workflow == 'analyze':
             return analyze_dataset_workflow(args)
         elif args.workflow == 'analyze-agreement':
@@ -192,6 +221,8 @@ def main():
             from src.viewers import view_inter_human_agreement
             view_inter_human_agreement()
             return 0
+        elif args.workflow == 'analyze-coverage':
+            return analyze_coverage_workflow(args)
         else:
             logger.error(f"Unknown workflow: {args.workflow}")
             return 1
@@ -374,6 +405,54 @@ def add_llm_scores_workflow(args):
         return 1
 
 
+def remove_llm_scores_workflow(args):
+    """Run LLM scores removal workflow - remove LLM assessment scores from dataset split."""
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Starting LLM scores removal workflow")
+    logger.info(f"Target split: {args.split}")
+    if args.sources:
+        logger.info(f"Processing sources: {', '.join(args.sources)}")
+    else:
+        logger.info("Processing all available sources")
+    if args.models:
+        logger.info(f"Removing models: {', '.join(args.models)}")
+    else:
+        logger.info("Removing ALL LLM scores")
+
+    try:
+        results = remove_llm_scores_from_datasets(
+            split=args.split,
+            sources=args.sources,
+            models=args.models
+        )
+
+        logger.info("\n" + "="*60)
+        logger.info("LLM SCORES REMOVAL SUMMARY")
+        logger.info("="*60)
+        logger.info(f"Total sources processed: {results['sources_processed']}")
+        logger.info(f"Total samples modified: {results['total_samples_modified']}")
+        logger.info(f"Total scores removed: {results['total_scores_removed']}")
+        if results['all_models_removed']:
+            logger.info(f"Models removed: {', '.join(results['all_models_removed'])}")
+
+        for source_result in results['source_results']:
+            logger.info(f"\n{source_result['source']}:")
+            logger.info(f"  Samples modified: {source_result['samples_modified']}")
+            logger.info(f"  Scores removed: {source_result['scores_removed']}")
+            if source_result['models_removed']:
+                logger.info(f"  Models removed: {', '.join(source_result['models_removed'])}")
+            logger.info(f"  Backup: {source_result['backup_file']}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"LLM scores removal workflow failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
 def analyze_dataset_workflow(args):
     """Run dataset analysis workflow."""
     logger = logging.getLogger(__name__)
@@ -460,6 +539,38 @@ def analyze_agreement_workflow(args):
 
     except Exception as e:
         logger.error(f"Agreement analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def analyze_coverage_workflow(args):
+    """Run coverage analysis workflow - analyze human and LLM score coverage."""
+    logger = logging.getLogger(__name__)
+
+    logger.info(f"Starting coverage analysis workflow")
+    logger.info(f"Target split: {args.split}")
+    if args.sources:
+        logger.info(f"Analyzing sources: {', '.join(args.sources)}")
+    else:
+        logger.info("Analyzing all available sources")
+
+    try:
+        from src.analyzers import CoverageAnalyzer
+
+        analyzer = CoverageAnalyzer()
+        results = analyzer.analyze(
+            split=args.split,
+            sources=args.sources
+        )
+
+        # Print the report
+        analyzer.print_report(results)
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Coverage analysis failed: {e}")
         import traceback
         traceback.print_exc()
         return 1

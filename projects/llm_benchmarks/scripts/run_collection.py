@@ -59,8 +59,10 @@ async def main():
                        help="Specific data sources to evaluate. Comma-separated: codeeval,codenet,codesearchnet,humaneval-x,mbpp")
     parser.add_argument("--sets", default="test",
                        help="Dataset splits to process (default: test). Comma-separated: train,valid,test")
-    parser.add_argument("--dataset-path", default="../dataset/generated/integrated", 
+    parser.add_argument("--dataset-path", default="../dataset/generated/integrated",
                        help="Path to integrated dataset directory")
+    parser.add_argument("--sample-ids-file", type=str,
+                       help="File containing sample IDs to process (one per line, format: source,submission_id)")
     
     # Execution options
     parser.add_argument("--output-dir", default="generated", help="Output directory")
@@ -123,6 +125,23 @@ async def main():
     settings.session_name = args.session_name
     settings.log_level = args.log_level
     settings.log_file = args.log_file
+
+    # Load sample IDs filter if provided
+    sample_ids_filter = None
+    if args.sample_ids_file:
+        sample_ids_filter = {}
+        with open(args.sample_ids_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    source, submission_id = parts[0].strip(), parts[1].strip()
+                    if source not in sample_ids_filter:
+                        sample_ids_filter[source] = set()
+                    sample_ids_filter[source].add(submission_id)
+        logger.info(f"Loaded sample ID filter: {sum(len(v) for v in sample_ids_filter.values())} samples from {len(sample_ids_filter)} sources")
     
     # Validate settings
     warnings = settings.validate()
@@ -159,7 +178,7 @@ async def main():
         
         # Load problems to check dataset
         logger.info("Loading dataset...")
-        num_problems = runner.load_problems(settings.get_data_sources_list(), settings.get_sets_list())
+        num_problems = runner.load_problems(settings.get_data_sources_list(), settings.get_sets_list(), sample_ids_filter)
         logger.info(f"Loaded {num_problems} problems")
         
         if num_problems == 0:
