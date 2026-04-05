@@ -52,14 +52,12 @@ class CodeFeatureExtractor:
         else:
             self.device = device
 
-        # Initialize CodeBERT if needed
+        # Initialize tokenizer for CodeBERT (model is loaded in regressor for fine-tuning)
         if method in ['codebert', 'hybrid']:
-            logger.info(f"Loading {model_name} on {self.device}...")
+            logger.info(f"Loading tokenizer for {model_name}...")
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
-            self.model.to(self.device)
-            self.model.eval()
-            logger.info("CodeBERT loaded successfully")
+            self.model = None  # Model loaded in regressor for gradient flow
+            logger.info("Tokenizer loaded successfully")
         else:
             self.tokenizer = None
             self.model = None
@@ -88,32 +86,26 @@ class CodeFeatureExtractor:
             raise ValueError(f"Unknown method: {self.method}")
 
     def _extract_codebert(self, features: Dict) -> Dict:
-        """Extract CodeBERT embeddings."""
+        """Extract CodeBERT token inputs for fine-tuning.
+
+        Returns tokenized inputs (not embeddings) so the model can
+        fine-tune the encoder during training.
+        """
         code = features['code']
 
-        # Tokenize
-        with torch.no_grad():
-            inputs = self.tokenizer(
-                code,
-                max_length=self.max_length,
-                padding='max_length',
-                truncation=True,
-                return_tensors='pt'
-            )
-
-            # Move to device
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-
-            # Get embeddings
-            outputs = self.model(**inputs)
-
-            # Use [CLS] token embedding as code representation
-            embeddings = outputs.last_hidden_state[:, 0, :].squeeze(0)  # [hidden_size]
+        # Tokenize only - don't compute embeddings
+        # Model will compute embeddings during forward pass for gradient flow
+        inputs = self.tokenizer(
+            code,
+            max_length=self.max_length,
+            padding='max_length',
+            truncation=True,
+            return_tensors='pt'
+        )
 
         return {
-            'embeddings': embeddings.cpu(),  # Move back to CPU for consistency
-            'input_ids': inputs['input_ids'].cpu().squeeze(0),
-            'attention_mask': inputs['attention_mask'].cpu().squeeze(0)
+            'input_ids': inputs['input_ids'].squeeze(0),
+            'attention_mask': inputs['attention_mask'].squeeze(0)
         }
 
     def _extract_simple(self, features: Dict) -> Dict:
@@ -169,10 +161,10 @@ class CodeFeatureExtractor:
     def get_embedding_dim(self) -> int:
         """Get dimension of extracted embeddings."""
         if self.method == 'codebert':
-            return self.model.config.hidden_size
+            return 768  # CodeBERT hidden size
         elif self.method == 'simple':
             return 10 + 11  # Basic metrics + keyword counts
         elif self.method == 'hybrid':
-            return self.model.config.hidden_size + 21
+            return 768 + 21  # CodeBERT + simple features
         else:
             raise ValueError(f"Unknown method: {self.method}")

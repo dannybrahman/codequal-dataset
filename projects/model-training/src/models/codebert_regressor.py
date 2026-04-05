@@ -101,8 +101,9 @@ class CodeBERTRegressor(BaseQualityModel):
         # Predict quality scores
         quality_scores = self.regression_head(code_embedding)
 
-        # Clip to valid range [1, 5]
-        quality_scores = torch.clamp(quality_scores, 1.0, 5.0)
+        # Only clip during inference (not training) to preserve gradients
+        if not self.training:
+            quality_scores = torch.clamp(quality_scores, 1.0, 5.0)
 
         return quality_scores
 

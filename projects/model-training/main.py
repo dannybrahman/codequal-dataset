@@ -10,8 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-import torch
-from torch.utils.data import DataLoader
+import torch # type: ignore
+from torch.utils.data import DataLoader # type: ignore
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -85,7 +85,7 @@ def train_command(args):
 
     # Initialize feature extractor
     if args.model == 'codebert':
-        feature_extractor = CodeFeatureExtractor(method='codebert', device=args.device)
+        feature_extractor = CodeFeatureExtractor(method=args.feature_method, device=args.device)
     else:  # mlp
         feature_extractor = CodeFeatureExtractor(method='simple')
 
@@ -141,7 +141,9 @@ def train_command(args):
     )
 
     # Save model info
+    feature_method = args.feature_method if args.model == 'codebert' else 'simple'
     training_config = {
+        'feature_method': feature_method,
         'batch_size': args.batch_size,
         'epochs': args.epochs,
         'learning_rate': args.lr,
@@ -271,10 +273,13 @@ def main():
                              help='Number of epochs')
     train_parser.add_argument('--lr', type=float, default=1e-4,
                              help='Learning rate')
-    train_parser.add_argument('--patience', type=int, default=5,
+    train_parser.add_argument('--patience', type=int, default=4,
                              help='Early stopping patience')
     train_parser.add_argument('--freeze-encoder', action='store_true',
                              help='Freeze encoder weights (CodeBERT only)')
+    train_parser.add_argument('--feature-method', default='codebert',
+                             choices=['codebert', 'hybrid'],
+                             help='Feature extraction method for CodeBERT (codebert=768, hybrid=768+21)')
     train_parser.add_argument('--device', default=None,
                              help='Device (cuda/mps/cpu or auto)')
 
